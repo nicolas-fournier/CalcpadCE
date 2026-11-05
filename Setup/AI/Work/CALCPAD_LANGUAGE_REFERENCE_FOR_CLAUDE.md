@@ -21,7 +21,8 @@ CalcpadCE is free software for mathematical and engineering calculations. It rep
 - modules, macros and string variables;
 - reading and writing data from/to text, CSV and Excel files;
 - program flow control with conditions and loops;
-- "titles" and 'text' comments in quotes;
+- markdown-first authoring (`#md full`): `#` headings and prose by default, math in `$…$`;
+- legacy "titles" and 'text' comments in quotes (classic mode);
 - support for Html and CSS in comments for rich formatting;
 - function plotting, images, tables, parametric SVG drawings, etc.;
 - automatic generation of Html forms for data input;
@@ -364,9 +365,14 @@ CalcpadCE is free software for mathematical and engineering calculations. It rep
   `spline(x; y; M)` - double Hermite spline interpolation from the elements of matrix M based on the values of x and y  
   `Tol` - target tolerance for the iterative PCG solver  
 		
-### Comments: 
+### Comments and text: 
 
-  "Title" or 'text' in double or single quotes, respectively. HTML, CSS, JS and SVG are allowed inside comments.  
+  **Markdown-first mode (recommended)** — start the worksheet with `#md full`. Then:
+  - Prose is the default: write text directly, no quotes. Emphasis `**bold**`, `*italic*`, `` `code` ``, lists `-`, tables, links.
+  - Headings: `#`…`######` + space → `<h1>`…`<h6>`. (A `#` glued to a keyword, e.g. `#if`, is a keyword, not a heading.)
+  - Math is delimited: inline `$ expr $`, block `$$ expr $$`. A literal dollar is `\$`.
+
+  **Classic mode (legacy)** — `"Title"` or `'text'` in double or single quotes, respectively; math is the default. HTML, CSS, JS and SVG are allowed inside comments.  
 	
 ### Graphing and plotting:  
 
@@ -548,8 +554,9 @@ You can add or omit as many "#else if's" as needed. Only one "#else" is allowed.
   `#round default` - restores rounding to the default settings  
   `#format FFFF` - specifies custom format string  
   `#format default` - restores the default formatting  
-  `#md on` - enables markdown in comments  
-  `#md off` - disables markdown in comments  
+  `#md full` - markdown-first mode: prose is the default, math is delimited by `$…$` / `$$…$$`, `#` headings give `<h1>`–`<h6>`  
+  `#md on` - enables markdown emphasis inside the classic quote nomenclature  
+  `#md off` - disables markdown  
   `#phasor` - sets output format of complex numbers to polar phasor: A∠φ  
   `#complex` - sets output format of complex numbers to Cartesian algebraic: a + bi.  
   Each of the above commands is effective after the current line until the end of the report or another command that overwrites it.  

@@ -36,6 +36,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Calcpad.core\Calcpad.Core.csproj" />
     <ProjectReference Include="..\Calcpad.OpenXml\Calcpad.OpenXml.csproj" />
+    <ProjectReference Include="..\Calcpad.AI\Calcpad.AI.csproj" />
   </ItemGroup>
 
   <ItemGroup>

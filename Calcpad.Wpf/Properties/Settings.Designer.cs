@@ -347,6 +347,18 @@ namespace Calcpad.Wpf.Properties {
 
         [global::System.Configuration.UserScopedSettingAttribute()]
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("380")]
+        public double AssistantPanelWidth {
+            get {
+                return ((double)(this["AssistantPanelWidth"]));
+            }
+            set {
+                this["AssistantPanelWidth"] = value;
+            }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
         [global::System.Configuration.DefaultSettingValueAttribute("False")]
         public bool ShowLibraryPanel {
             get {

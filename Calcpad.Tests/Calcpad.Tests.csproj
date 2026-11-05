@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Calcpad.Core\Calcpad.Core.csproj" />
+    <ProjectReference Include="..\Calcpad.AI\Calcpad.AI.csproj" />
   </ItemGroup>
 
 </Project>

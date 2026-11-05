@@ -83,6 +83,9 @@
     <Setting Name="LibraryPanelWidth" Type="System.Double" Scope="User">
       <Value Profile="(Default)">250</Value>
     </Setting>
+    <Setting Name="AssistantPanelWidth" Type="System.Double" Scope="User">
+      <Value Profile="(Default)">380</Value>
+    </Setting>
     <Setting Name="ShowLibraryPanel" Type="System.Boolean" Scope="User">
       <Value Profile="(Default)">False</Value>
     </Setting>

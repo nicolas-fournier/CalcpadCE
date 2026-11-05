@@ -3,9 +3,11 @@
   "name": "Calcpad",
   "scopeName": "source.calcpad",
   "patterns": [
+    { "include": "#markdown" },
     { "include": "#text" },
     { "include": "#directives" },
     { "include": "#methods" },
+    { "include": "#math" },
     { "include": "#functions" },
     { "include": "#constants" },
     { "include": "#numbers" },
@@ -35,6 +37,51 @@
         }
       ]
     },
+    "markdown": {
+      "patterns": [
+        {
+          "name": "markup.fenced_code.block.calcpad",
+          "begin": "^\\s*```.*$",
+          "end": "^\\s*```\\s*$",
+          "beginCaptures": { "0": { "name": "punctuation.definition.markdown.calcpad" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.markdown.calcpad" } }
+        },
+        { "name": "markup.heading.calcpad", "match": "^\\s*#{1,6}\\s+.*$" },
+        { "name": "markup.quote.calcpad", "match": "^\\s*>\\s?.*$" },
+        { "name": "markup.list.calcpad", "match": "^\\s*([-*+]|[0-9]+\\.)\\s+" },
+        { "name": "markup.inline.raw.calcpad", "match": "`[^`]+`" }
+      ]
+    },
+    "math": {
+      "patterns": [
+        {
+          "name": "meta.math.block.calcpad",
+          "begin": "\\$\\$",
+          "end": "\\$\\$",
+          "patterns": [
+            { "include": "#functions" },
+            { "include": "#constants" },
+            { "include": "#numbers" },
+            { "include": "#operators" },
+            { "include": "#punctuation" },
+            { "include": "#identifiers" }
+          ]
+        },
+        {
+          "name": "meta.math.inline.calcpad",
+          "begin": "\\$",
+          "end": "\\$|(?=$)",
+          "patterns": [
+            { "include": "#functions" },
+            { "include": "#constants" },
+            { "include": "#numbers" },
+            { "include": "#operators" },
+            { "include": "#punctuation" },
+            { "include": "#identifiers" }
+          ]
+        }
+      ]
+    },
     "html": {
       "patterns": [
         { "name": "comment.block.html.calcpad", "begin": "<!--", "end": "-->" },
@@ -52,7 +99,7 @@
     "directives": {
       "patterns": [
         {
-          "match": "(?i)(#)(else\\s+if|end\\s+if|end\\s+def|md\\s+on|md\\s+off|if|else|rad|deg|gra|val|equ|noc|round|format|show|hide|nosub|novar|varsub|const|split|wrap|pre|post|repeat|for|while|loop|break|continue|include|local|global|def|pause|input|md|read|write|append|phasor|complex)\\b",
+          "match": "(?i)(#)(else\\s+if|end\\s+if|end\\s+def|md\\s+full|md\\s+on|md\\s+off|if|else|rad|deg|gra|val|equ|noc|round|format|show|hide|nosub|novar|varsub|const|split|wrap|pre|post|repeat|for|while|loop|break|continue|include|local|global|def|pause|input|md|read|write|append|phasor|complex)\\b",
           "captures": {
             "1": { "name": "punctuation.definition.keyword.calcpad" },
             "2": { "name": "keyword.control.calcpad" }

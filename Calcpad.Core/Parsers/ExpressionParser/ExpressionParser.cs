@@ -23,7 +23,13 @@ namespace Calcpad.Core
         private bool _isPausedByUser;
         private int _pauseCharCount;
         private bool _isMarkdownOn;
+        private bool _mdFull;
         private MathParser _parser;
+        // Pipeline for multi-line markdown blocks in #md full mode (lists, tables,
+        // fenced code, multi-paragraph prose). Advanced extensions enable pipe/grid
+        // tables, task lists, etc. Only ever used when _mdFull is active (opt-in).
+        private static readonly MarkdownPipeline _mdBlockPipeline =
+            new MarkdownPipelineBuilder().UseAdvancedExtensions().Build();
         private readonly StringBuilder _sb = new(10000);
         private Queue<int> _errors;
         private LineInfo[] _lineCache;
@@ -153,13 +159,26 @@ namespace Calcpad.Core
                     if ((textSpan[0] != '$' || !ParsePlot(textSpan)) &&
                         ParseCondition(textSpan, keyword))
                     {
+                        // #md full: accumulate consecutive plain-markdown lines into a
+                        // single block so lists, tables, fenced code and multi-paragraph
+                        // prose render correctly (Markdig needs the whole block at once).
+                        if (_mdFull && _loops.Count == 0 &&
+                            !_lineCache[_currentLine].IsCached &&
+                            TryRenderMarkdownBlock(code, lines, lineCount))
+                        {
+                            s = string.Empty;
+                            textSpan = s.AsSpan();
+                            continue;
+                        }
                         List<Token> tokens;
                         if (_lineCache[_currentLine].IsCached)
                             tokens = _lineCache[_currentLine].Tokens;
                         else
                         {
                             var skipChars = keyword == Keyword.Const ? 7 : _condition.KeywordLength;
-                            tokens = GetTokens(textSpan[skipChars..]);
+                            tokens = _mdFull ?
+                                GetTokensMarkdown(textSpan[skipChars..]) :
+                                GetTokens(textSpan[skipChars..]);
                             if (_isMarkdownOn)
                                 ParseMarkdown(tokens);
 
@@ -204,7 +223,9 @@ namespace Calcpad.Core
                 !_calculate;
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            bool HasLineExtension(ReadOnlySpan<char> s) => s.EndsWith(" _") || s.Length > 0 && CheckIsLineExtension(s[^1]) && !Validator.IsComment(s);
+            // In #md full (prose-first) mode, trailing operator chars like '|' are markdown
+            // (e.g. table rows), not Calcpad line continuations — only explicit " _" continues.
+            bool HasLineExtension(ReadOnlySpan<char> s) => s.EndsWith(" _") || !_mdFull && s.Length > 0 && CheckIsLineExtension(s[^1]) && !Validator.IsComment(s);
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             bool CheckIsLineExtension(char c) => c < 128 && IsLineExtension[c];
@@ -237,6 +258,57 @@ namespace Calcpad.Core
                     return true;
                 }
                 return false;
+            }
+
+            // Collects a maximal run of consecutive plain-markdown lines starting at the
+            // current line and renders them as one Markdig block. Returns false (leaving
+            // _currentLine untouched) when the run is a single content line, so the normal
+            // per-line path still handles isolated prose / inline math.
+            bool TryRenderMarkdownBlock(ReadOnlySpan<char> src, List<int> lineStarts, int count)
+            {
+                var start = _currentLine;
+                var sb = new StringBuilder();
+                var pendingBlanks = 0;
+                var contentLines = 0;
+                var lastContent = -1;
+                for (int k = start; k < count; ++k)
+                {
+                    var raw = ExtractRawLine(src, lineStarts, k);
+                    var kind = ClassifyMarkdownLine(raw);
+                    if (kind == MarkdownLineKind.Blank)
+                    {
+                        ++pendingBlanks;
+                        continue;
+                    }
+                    if (kind == MarkdownLineKind.Stop)
+                        break;
+
+                    while (pendingBlanks > 0)
+                    {
+                        sb.Append('\n');
+                        --pendingBlanks;
+                    }
+                    if (contentLines > 0)
+                        sb.Append('\n');
+
+                    sb.Append(raw);
+                    ++contentLines;
+                    lastContent = k;
+                }
+                if (contentLines <= 1 || lastContent < 0)
+                    return false;
+
+                if (_isVisible && _isVal != 1)
+                {
+                    var html = Markdown.ToHtml(sb.ToString(), _mdBlockPipeline).TrimEnd();
+                    if (html.Length > 0 && _htmlLines < MaxHtmlLines)
+                    {
+                        ++_htmlLines;
+                        _sb.Append(html).AppendLine();
+                    }
+                }
+                _currentLine = lastContent;
+                return true;
             }
 
             void ParseMarkdown(List<Token> tokens)
@@ -417,6 +489,69 @@ namespace Calcpad.Core
             }
         }
 
+        private enum MarkdownLineKind { Content, Blank, Stop }
+
+        // Extracts the raw source of line k (leading whitespace preserved for markdown
+        // indentation), stripping the optional '\v<lineNo>' marker and trailing newline.
+        private static string ExtractRawLine(ReadOnlySpan<char> src, List<int> lineStarts, int k)
+        {
+            var seg = src[lineStarts[k]..lineStarts[k + 1]];
+            var v = seg.IndexOf('\v');
+            if (v >= 0)
+                seg = seg[..v];
+
+            seg = seg.TrimEnd('\n').TrimEnd('\r');
+            return seg.ToString();
+        }
+
+        // Decides whether a line can join a #md full markdown block. Lines carrying
+        // inline math ($…$), plots, keywords, HTML or a line-extension fall back to the
+        // per-line path (Stop); blank lines are held as paragraph separators.
+        private static MarkdownLineKind ClassifyMarkdownLine(string raw)
+        {
+            var t = raw.AsSpan().TrimStart();
+            if (t.IsEmpty)
+                return MarkdownLineKind.Blank;
+
+            var c0 = t[0];
+            if (c0 == '<')
+                return MarkdownLineKind.Stop;
+
+            if (c0 == '#' && GetKeyword(t) != Keyword.None)
+                return MarkdownLineKind.Stop;
+
+            if (c0 == '$' &&
+                (t.StartsWith("$plot", StringComparison.OrdinalIgnoreCase) ||
+                 t.StartsWith("$map", StringComparison.OrdinalIgnoreCase)))
+                return MarkdownLineKind.Stop;
+
+            // A fenced code block (``` …) stays a block (literal code); other lines carrying
+            // inline math — $…$ or `…` — fall back to the per-line path so they're evaluated.
+            if (!t.StartsWith("```", StringComparison.Ordinal) && ContainsInlineMathDelim(t))
+                return MarkdownLineKind.Stop;
+
+            // Only an explicit " _" continuation falls back to the per-line path; trailing
+            // operator chars like '|' are markdown (table rows) in #md full mode.
+            if (raw.AsSpan().TrimEnd().EndsWith(" _"))
+                return MarkdownLineKind.Stop;
+
+            return MarkdownLineKind.Content;
+        }
+
+        // True if the line has an unescaped inline-math delimiter: $ (…$…$) or ` (`…`).
+        private static bool ContainsInlineMathDelim(ReadOnlySpan<char> s)
+        {
+            for (int i = 0, len = s.Length; i < len; ++i)
+            {
+                var c = s[i];
+                if (c == '\\')
+                    ++i;
+                else if (c == '$' || c == '`')
+                    return true;
+            }
+            return false;
+        }
+
         private void Initialize(bool calculate, int lineCount)
         {
             _htmlLines = 0;
@@ -441,7 +576,9 @@ namespace Calcpad.Core
                 _isVal = 0;
                 _parser.SetVariable("Units", new RealValue(UnitsFactor()));
                 _previousKeyword = Keyword.None;
-                _isMarkdownOn = false;
+                // Seed markdown mode from Settings; a #md directive in the source overrides it.
+                _isMarkdownOn = Settings.Markdown != MarkdownMode.Off;
+                _mdFull = Settings.Markdown == MarkdownMode.Full;
                 OpenXmlExpressions.Clear();
             }
             else

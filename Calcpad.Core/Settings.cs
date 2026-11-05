@@ -2,12 +2,24 @@
 
 namespace Calcpad.Core
 {
+    // Document-wide markdown nomenclature mode. Off = classic ('text', "title", math by
+    // default). Emphasis = legacy `#md on` (markdown emphasis inside quoted text). Full =
+    // markdown-first (`#md full`): prose is the default, math is delimited by $…$ / $$…$$.
+    // A `#md on|off|full` directive in the source overrides this seed from its line on.
+    public enum MarkdownMode
+    {
+        Off,
+        Emphasis,
+        Full
+    }
+
     [Serializable()]
     public class Settings
     {
         public MathSettings Math { get; set; } = new();
         public PlotSettings Plot { get; set; } = new();
         public string Units { get; set; } = "m";
+        public MarkdownMode Markdown { get; set; } = MarkdownMode.Off;
     }
 
     [Serializable()]

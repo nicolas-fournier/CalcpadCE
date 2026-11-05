@@ -618,9 +618,21 @@ namespace Calcpad.Core
             {
                 var expr = s[3..].Trim();
                 if (expr.Equals("on", StringComparison.OrdinalIgnoreCase))
+                {
                     _isMarkdownOn = true;
+                    _mdFull = false;
+                }
+                else if (expr.Equals("full", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Markdown-first mode: prose is the default, math is delimited by $…$ / $$…$$.
+                    _isMarkdownOn = true;
+                    _mdFull = true;
+                }
                 else if (expr.Equals("off", StringComparison.OrdinalIgnoreCase))
+                {
                     _isMarkdownOn = false;
+                    _mdFull = false;
+                }
                 else
                     AppendError(s.ToString(), string.Format(Messages.Invalid_keyword_0, expr.ToString()), _currentLine);
             }

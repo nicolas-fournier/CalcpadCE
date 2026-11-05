@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Calcpad.AI</RootNamespace>
+    <OutputType>Library</OutputType>
+    <Authors>CalcpadCE Contributors</Authors>
+    <Company>CalcpadCE Community</Company>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\calcpad-md-system-prompt.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Anthropic" Version="13.6.0" />
+  </ItemGroup>
+</Project>

@@ -470,8 +470,10 @@ Results will appear in the "**Output**" box on the right as a professionally for
     - `#round default` - restores rounding to the default settings
     - `#format *FFFF*` - specifies custom format string
     - `#format default` - restores the default formatting
-    - `#md on` - enables markdown in comments
-    - `#md off` - disables markdown in comments
+    - `#md full` - markdown-first mode: prose is the default (no quotes), `#`…`######` give headings `<h1>`–`<h6>`. Math is written as **markdown inline code `` `expr` `` (preferred)** or `$ … $` (inline), and `$$ … $$` (block) — all evaluated as Calcpad. A literal dollar is `\$`, a literal backtick is `` \` ``. Keywords like `#if` (no space after `#`) are unaffected. Consecutive markdown lines are rendered together, so **multi-line lists, numbered lists, tables (`| a | b |`), blockquotes (`>`) and fenced code blocks (` ``` `, kept as literal code) work**. In this mode a trailing `|` is a table cell, not a line continuation (use ` _` to continue a line). The heading levels map to distinct DOCX heading styles on export.
+    - `#md on` - enables markdown emphasis inside the classic `'text'` / `"title"` nomenclature
+    - `#md off` - disables markdown
+    - A document-wide default can also be set programmatically via `Settings.Markdown` (`Off` / `Emphasis` / `Full`); a `#md …` directive in the source always overrides it. In the desktop app, **Menu → Convert to Markdown** rewrites a classic worksheet into `#md full` form (undoable).
     - `#phasor` - sets output format of complex numbers to polar phasor: A∠φ
     - `#complex` - sets output format of complex numbers to cartesian algebraic: a + ib.
 

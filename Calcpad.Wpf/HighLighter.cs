@@ -1515,6 +1515,7 @@ namespace Calcpad.Wpf
                             break;
                         case "on":
                         case "off":
+                        case "full":
                             if (kwd.Equals("#md"))
                                 return Types.Keyword;
                             break;

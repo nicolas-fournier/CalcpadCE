@@ -238,6 +238,7 @@ namespace Calcpad.Wpf
             };
             _insertManager = new(RichTextBox);
             _autoCompleteManager = new(RichTextBox, AutoCompleteListBox, Dispatcher, _insertManager);
+            _autoCompleteManager.SnippetInserter = InsertAssistantText;
             LibraryTree.ItemsSource = _libraryManager.Folders;
             _libraryManager.LoadFromSettings(Properties.Settings.Default.LibraryFolders);
             _cfn = string.Empty;
@@ -249,7 +250,24 @@ namespace Calcpad.Wpf
             _findReplace.BeginSearch += FindReplace_BeginSearch;
             _findReplace.EndSearch += FindReplace_EndSearch;
             _findReplace.EndReplace += FindReplace_EndReplace;
+            PopulateSnippetsMenu();
             _isTextChangedEnabled = true;
+        }
+
+        // Builds the Snippets menu from the shared markdown-first catalogue so the editor and the
+        // AI assistant stay in sync. Each item inserts its body at the caret.
+        private void PopulateSnippetsMenu()
+        {
+            foreach (var snippet in Calcpad.AI.CalcpadSnippets.All)
+            {
+                var item = new MenuItem { Header = snippet.Title, Tag = snippet.Body };
+                item.Click += (s, _) =>
+                {
+                    if (s is MenuItem mi && mi.Tag is string body)
+                        InsertAssistantText(body);
+                };
+                MenuSnippets.Items.Add(item);
+            }
         }
 
         private static string AddCultureExt(string ext) => string.Equals(_currentCultureName, "en", StringComparison.Ordinal) ?
@@ -491,6 +509,138 @@ namespace Calcpad.Wpf
                 _highlighter.Defined.Get(s, lineNumber);
                 _highlighter.Parse(p, IsComplex, lineNumber, i == 1);
             }
+        }
+
+        private bool _assistantWired;
+
+        private void MenuAssistant_Click(object sender, RoutedEventArgs e)
+        {
+            SetAssistantPanelVisible(AssistantDock.Visibility != Visibility.Visible);
+        }
+
+        // Docks the AI assistant as a snappable right-side panel (same pattern as the Library panel),
+        // resizable via AssistantSplitter. Context + insertion are wired once.
+        private void SetAssistantPanelVisible(bool visible)
+        {
+            if (visible)
+            {
+                if (!_assistantWired)
+                {
+                    AssistantDockPanel.GetWorksheetText = () => InputText;
+                    AssistantDockPanel.InsertRequested += InsertAssistantText;
+                    AssistantDockPanel.EvaluateWorksheet = EvaluateForAssistant;
+                    AssistantDockPanel.GetResultText = () => EvaluateForAssistant(InputText);
+                    _assistantWired = true;
+                }
+                var w = Properties.Settings.Default.AssistantPanelWidth;
+                if (w < 240) w = 380;
+                AssistantColumn.Width = new GridLength(w);
+                AssistantSplitterColumn.Width = new GridLength(4);
+                AssistantDock.Visibility = Visibility.Visible;
+                AssistantSplitter.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                if (AssistantColumn.Width.Value > 0)
+                    Properties.Settings.Default.AssistantPanelWidth = AssistantColumn.Width.Value;
+                AssistantColumn.Width = new GridLength(0);
+                AssistantSplitterColumn.Width = new GridLength(0);
+                AssistantDock.Visibility = Visibility.Collapsed;
+                AssistantSplitter.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        // A4: converts the whole worksheet from classic nomenclature to markdown-first
+        // (#md full) using the Core converter, then reloads the editor. Undoable.
+        private void MenuConvertMarkdown_Click(object sender, RoutedEventArgs e)
+        {
+            var text = GetInputText();
+            if (string.IsNullOrWhiteSpace(text))
+                return;
+
+            var answer = MessageBox.Show(
+                "Convert the whole worksheet from classic nomenclature ('text', \"title\", bare math) to markdown-first (#md full)?\n\nThis rewrites the editor content. Review the result; press Ctrl+Z to undo.",
+                "Convert to Markdown",
+                MessageBoxButton.OKCancel,
+                MessageBoxImage.Question);
+            if (answer != MessageBoxResult.OK)
+                return;
+
+            var md = ClassicToMarkdownConverter.Convert(text);
+            LoadTextIntoDocument(md);
+            ForceHighlight();
+            if (IsAutoRun)
+                AutoRun();
+        }
+
+        // Replaces the editor document with the given text, mirroring the file-load path.
+        private void LoadTextIntoDocument(string text)
+        {
+            var normalized = text.Replace("\r\n", "\n").Replace("\r", "\n");
+            var lines = normalized.Split('\n');
+            _isTextChangedEnabled = false;
+            RichTextBox.BeginChange();
+            _document.Blocks.Clear();
+            _highlighter.Defined.Get(normalized.AsSpan().EnumerateLines(), IsComplex);
+            foreach (var line in lines)
+                _document.Blocks.Add(new Paragraph(new Run(line)));
+
+            if (_document.Blocks.Count == 0)
+                _document.Blocks.Add(new Paragraph(new Run()));
+
+            var last = _document.Blocks.LastBlock;
+            if (last.ContentStart.GetOffsetToPosition(last.ContentEnd) == 0 &&
+                _document.Blocks.Count > 1)
+                _document.Blocks.Remove(last);
+
+            _currentParagraph = _document.Blocks.FirstBlock as Paragraph;
+            _currentLineNumber = 1;
+            _undoMan.Reset();
+            Record();
+            RichTextBox.EndChange();
+            _isTextChangedEnabled = true;
+            _forceHighlight = true;
+        }
+
+        // Agent-mode evaluator: parses a Calcpad snippet and returns a plain-text result so the
+        // assistant can check a formula before inserting it. Uses a throwaway parser (no UI change).
+        private string EvaluateForAssistant(string source)
+        {
+            if (string.IsNullOrWhiteSpace(source))
+                return "(empty)";
+            try
+            {
+                _macroParser.Parse(source, out var expanded, null, 0, true);
+                var parser = new Calcpad.Core.ExpressionParser { Settings = _parser?.Settings ?? new Calcpad.Core.Settings() };
+                parser.Parse(expanded ?? source, true, false);
+                var text = System.Text.RegularExpressions.Regex.Replace(parser.HtmlResult ?? string.Empty, "<[^>]+>", " ");
+                text = System.Net.WebUtility.HtmlDecode(text);
+                text = System.Text.RegularExpressions.Regex.Replace(text, "[ \\t]+", " ");
+                text = System.Text.RegularExpressions.Regex.Replace(text, "( *\\n *)+", "\n").Trim();
+                return text.Length == 0 ? "(no output)" : text;
+            }
+            catch (Exception ex)
+            {
+                return "Evaluation error: " + ex.Message;
+            }
+        }
+
+        // Inserts assistant-generated (or snippet) text at the caret, highlighted and recalculated,
+        // reusing the editor's multi-line insertion path.
+        internal void InsertAssistantText(string text)
+        {
+            if (string.IsNullOrEmpty(text) || !RichTextBox.IsEnabled)
+                return;
+
+            var normalized = text.Replace("\r\n", "\n").Replace("\r", "\n");
+            _isTextChangedEnabled = false;
+            RichTextBox.BeginChange();
+            InsertLines(normalized, "\n", false);
+            RichTextBox.EndChange();
+            _isTextChangedEnabled = true;
+            ForceHighlight();
+            CalculateAsync();
+            RichTextBox.Focus();
         }
 
         private async Task AutoRun(bool syncScroll = false)

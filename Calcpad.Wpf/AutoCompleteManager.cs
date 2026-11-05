@@ -21,6 +21,11 @@ namespace Calcpad.Wpf
         private readonly Dispatcher _dispatcher;
         private readonly InsertManager _insertManager;
         private readonly int _autoCompleteCount;
+        private static readonly Brush SnippetBrush = Brushes.SeaGreen;
+
+        // C2: invoked with a snippet body when a snippet completion is committed. Set by
+        // MainWindow to the editor's multi-line insertion (highlight + recalculate).
+        internal Action<string> SnippetInserter { get; set; }
 
         internal AutoCompleteManager(RichTextBox richTextBox, ListBox listBox, Dispatcher dispatcher, InsertManager insertManager)
         {
@@ -64,6 +69,7 @@ namespace Calcpad.Wpf
             items.Add(new ListBoxItem() { Content = "#md", Foreground = Brushes.DarkMagenta });
             items.Add(new ListBoxItem() { Content = "#md on", Foreground = Brushes.DarkMagenta });
             items.Add(new ListBoxItem() { Content = "#md off", Foreground = Brushes.DarkMagenta });
+            items.Add(new ListBoxItem() { Content = "#md full", Foreground = Brushes.DarkMagenta });
             items.Add(new ListBoxItem() { Content = "#nosub", Foreground = Brushes.DarkMagenta });
             items.Add(new ListBoxItem() { Content = "#novar", Foreground = Brushes.DarkMagenta });
             items.Add(new ListBoxItem() { Content = "#pause", Foreground = Brushes.DarkMagenta });
@@ -798,6 +804,16 @@ namespace Calcpad.Wpf
             items.Add(new ListBoxItem() { Content = "μWh", Foreground = Brushes.DarkCyan });
             items.Add(new ListBoxItem() { Content = "μΩ", Foreground = Brushes.DarkCyan });
             items.Add(new ListBoxItem() { Content = "μ℧", Foreground = Brushes.DarkCyan });
+            // C2: markdown-first snippets (shared catalogue). The Tag carries the multi-line
+            // body; EndAutoComplete inserts that body instead of the label when Tag is set.
+            foreach (var snippet in Calcpad.AI.CalcpadSnippets.All)
+                items.Add(new ListBoxItem()
+                {
+                    Content = $"{snippet.Key}  ⟨{snippet.Title}⟩",
+                    Foreground = SnippetBrush,
+                    FontStyle = FontStyles.Italic,
+                    Tag = snippet.Body
+                });
         }
 
         internal void InitAutoComplete(string input, Paragraph currentParagraph)
@@ -954,6 +970,18 @@ namespace Calcpad.Wpf
         private void EndAutoComplete()
         {
             var selectedItem = (ListBoxItem)_listBox.SelectedItem;
+            // C2: a snippet item carries its multi-line body in Tag — remove the typed
+            // trigger and insert the body through the editor's multi-line path.
+            if (selectedItem.Tag is string snippetBody)
+            {
+                var triggerRange = new TextRange(_autoCompleteStart, _richTextBox.Selection.End);
+                triggerRange.Text = string.Empty;
+                _listBox.Visibility = Visibility.Hidden;
+                _richTextBox.Selection.Select(triggerRange.End, triggerRange.End);
+                _richTextBox.Focus();
+                SnippetInserter?.Invoke(snippetBody);
+                return;
+            }
             string s = (string)selectedItem.Content;
             var items = _listBox.Items;
             var index = items.IndexOf(selectedItem);
@@ -1053,6 +1081,17 @@ namespace Calcpad.Wpf
         {
             switch (e.Key)
             {
+                case Key.Enter:
+                    // Enter accepts the highlighted completion (snippet or symbol), like Tab —
+                    // so typing e.g. "h1" + Enter drops in the <h1>…</h1> snippet.
+                    if (_listBox.SelectedItem is ListBoxItem)
+                    {
+                        EndAutoComplete();
+                        e.Handled = true;
+                    }
+                    else
+                        _listBox.Visibility = Visibility.Hidden;
+                    return;
                 case Key.Left:
                 case Key.Right:
                 case Key.PageUp:
@@ -1060,7 +1099,6 @@ namespace Calcpad.Wpf
                 case Key.Home:
                 case Key.End:
                 case Key.Delete:
-                case Key.Enter:
                 case Key.Space:
                 case Key.LeftCtrl:
                 case Key.RightCtrl:

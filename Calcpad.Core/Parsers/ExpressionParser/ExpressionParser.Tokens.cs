@@ -68,6 +68,89 @@ namespace Calcpad.Core
             return tokens;
         }
 
+        // Markdown-first line classifier (#md full):
+        // prose is the default, math is delimited by $…$ (inline) and $$…$$ (block).
+        // A backslash escapes a literal delimiter: \$ \# \`.
+        // Keyword lines (#if, #repeat, …) are intercepted before this is called, so a
+        // leading '#'+space (an ATX heading) or any other prose reaches here as plain text
+        // and is rendered by Markdig (ParseMarkdown).
+        private List<Token> GetTokensMarkdown(ReadOnlySpan<char> s)
+        {
+            var tokens = new List<Token>();
+            var ts = new TextSpan(s);
+            var inMath = false;
+            for (int i = 0, len = s.Length; i < len; ++i)
+            {
+                var c = s[i];
+                if (c == '\\' && i + 1 < len && IsMarkdownEscapable(s[i + 1]))
+                {
+                    ts.Expand(); // backslash
+                    ts.Expand(); // escaped char
+                    ++i;
+                }
+                else if (c == '`')
+                {
+                    // Inline code `expr` is evaluated as Calcpad math (markdown-native formulas),
+                    // exactly like $expr$. A literal backtick is \`.
+                    if (!ts.IsEmpty || inMath)
+                        AddMarkdownToken(tokens, ts.Cut(), inMath);
+
+                    ts.Reset(i + 1);
+                    inMath = !inMath;
+                }
+                else if (c == '$')
+                {
+                    var isBlock = i + 1 < len && s[i + 1] == '$';
+                    if (!ts.IsEmpty || inMath)
+                        AddMarkdownToken(tokens, ts.Cut(), inMath);
+
+                    var skip = isBlock ? 2 : 1;
+                    ts.Reset(i + skip);
+                    if (isBlock)
+                        ++i;
+
+                    inMath = !inMath;
+                }
+                else
+                    ts.Expand();
+            }
+            if (!ts.IsEmpty || inMath)
+                AddMarkdownToken(tokens, ts.Cut(), inMath);
+
+            return tokens;
+        }
+
+        private static bool IsMarkdownEscapable(char c) => c is '$' or '#' or '`' or '\\';
+
+        private void AddMarkdownToken(List<Token> tokens, ReadOnlySpan<char> value, bool isMath)
+        {
+            if (isMath)
+            {
+                if (value.IsWhiteSpace())
+                    return;
+
+                tokens.Add(new Token(value.ToString(), TokenTypes.Expression));
+                return;
+            }
+            var text = value.ToString();
+            if (text.IndexOf('\\') >= 0)
+                text = text
+                    .Replace("\\$", "$")
+                    .Replace("\\#", "#")
+                    .Replace("\\`", "`")
+                    .Replace("\\\\", "\\");
+
+            if (_isVal < 1)
+                text = tokens.Count == 0 ? text + " " : string.Concat(" ", text, " ");
+
+            var token = new Token(text, TokenTypes.Text);
+            var trimmed = text.AsSpan().TrimStart();
+            if (trimmed.Length > 0 && trimmed[0] == '<')
+                token.Type = TokenTypes.Html;
+
+            tokens.Add(token);
+        }
+
         private void AddToken(List<Token> tokens, ReadOnlySpan<char> value, char separator)
         {
             var tokenValue = value.ToString().Replace("\"\"", "&quot;").Replace("''", "&apos;");
