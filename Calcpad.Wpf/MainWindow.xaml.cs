@@ -1944,59 +1944,61 @@ namespace Calcpad.Wpf
         private bool GetInputTextFromFile()
         {
             var lines = ReadLines(CurrentFileName);
-            _isTextChangedEnabled = false;
-            RichTextBox.BeginChange();
-            _document.Blocks.Clear();
             SetCodeCheckBoxVisibility();
-            _highlighter.Defined.Get(lines, IsComplex);
             var hasForm = false;
+            var textLines = new List<string>();
+            var fieldValues = new Queue<string>();
             foreach (var line in lines)
             {
-                ReadOnlySpan<char> s;
                 if (line.Contains('\v'))
                 {
                     hasForm = true;
                     var n = line.IndexOf('\v');
+                    foreach (var f in (n == 0 ? line[1..] : line[(n + 1)..]).EnumerateSplits('\t'))
+                        fieldValues.Enqueue(f.ToString());
+
                     if (n == 0)
-                    {
-                        SetInputFieldsFromFile(line[1..].EnumerateSplits('\t'));
-                        break;
-                    }
-                    else
-                    {
-                        SetInputFieldsFromFile(line[(n + 1)..].EnumerateSplits('\t'));
-                        s = line[..n];
-                    }
+                        break; // the trailing line is only form-field data
+
+                    textLines.Add(ReplaceCStyleOperators(line[..n].TrimStart('\t')));
                 }
                 else
                 {
-                    s = ReplaceCStyleOperators(line.TrimStart('\t'));
+                    var s = ReplaceCStyleOperators(line.TrimStart('\t'));
                     if (!hasForm)
                         hasForm = MacroParser.HasInputFields(s);
+                    textLines.Add(s);
                 }
-                _document.Blocks.Add(new Paragraph(new Run(s.ToString())));
             }
-            if (_document.Blocks.Count == 0)
-                _document.Blocks.Add(new Paragraph(new Run()));
+            // Drop a single trailing empty line (mirrors the old document trim).
+            if (textLines.Count > 1 && textLines[^1].Length == 0)
+                textLines.RemoveAt(textLines.Count - 1);
 
-            var b = _document.Blocks.LastBlock;
-            if (b.ContentStart.GetOffsetToPosition(b.ContentEnd) == 0)
-                _document.Blocks.Remove(b);
-
-            _currentParagraph = RichTextBox.Selection.Start.Paragraph;
-            _currentLineNumber = GetLineNumber(_currentParagraph);
-            _undoMan.Reset();
-            Record();
-            RichTextBox.EndChange();
-            _isTextChangedEnabled = true;
-            _forceHighlight = true;
-            if (_useAvalon)
+            // Restore saved input-field values into the lines that have fields.
+            while (fieldValues.Count > 0)
             {
-                _isTextChangedEnabled = false;
-                CodeEditorAvalon.Text = GetDocumentText();
-                _isTextChangedEnabled = true;
-                _highlighter.Defined.Get(InputTextLines, IsComplex);
+                var applied = false;
+                for (int i = 0; i < textLines.Count && fieldValues.Count > 0; ++i)
+                {
+                    _stringBuilder.Clear();
+                    if (MacroParser.SetLineInputFields(textLines[i].TrimEnd(), _stringBuilder, fieldValues, false))
+                    {
+                        textLines[i] = _stringBuilder.ToString();
+                        applied = true;
+                    }
+                }
+                _stringBuilder.Clear();
+                if (!applied)
+                    break;
             }
+
+            _isTextChangedEnabled = false;
+            CodeEditorAvalon.Text = string.Join("\n", textLines);
+            CodeEditorAvalon.CaretOffset = 0;
+            CodeEditorAvalon.Document.UndoStack.ClearAll();
+            _isTextChangedEnabled = true;
+            _highlighter.Defined.Get(InputTextLines, IsComplex);
+            _forceHighlight = true;
             return hasForm;
         }
 

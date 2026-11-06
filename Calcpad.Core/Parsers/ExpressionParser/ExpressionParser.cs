@@ -29,7 +29,10 @@ namespace Calcpad.Core
         // fenced code, multi-paragraph prose). Advanced extensions enable pipe/grid
         // tables, task lists, etc. Only ever used when _mdFull is active (opt-in).
         private static readonly MarkdownPipeline _mdBlockPipeline =
-            new MarkdownPipelineBuilder().UseAdvancedExtensions().Build();
+            new MarkdownPipelineBuilder()
+                .UseAdvancedExtensions()
+                .UseSoftlineBreakAsHardlineBreak() // a single newline = a line break (WYSIWYG prose)
+                .Build();
         private readonly StringBuilder _sb = new(10000);
         private Queue<int> _errors;
         private LineInfo[] _lineCache;
@@ -356,7 +359,7 @@ namespace Calcpad.Core
                             sb.Append(token.Value).Append(rs);
                     }
                 }
-                var pipeline = new MarkdownPipelineBuilder().UseEmphasisExtras().UseListExtras().Build();
+                var pipeline = new MarkdownPipelineBuilder().UseEmphasisExtras().UseListExtras().UseSoftlineBreakAsHardlineBreak().Build();
                 var document = Markdown.Parse(sb.ToString(), pipeline);
                 using StringWriter writer = new();
                 HtmlRenderer renderer = new(writer)
