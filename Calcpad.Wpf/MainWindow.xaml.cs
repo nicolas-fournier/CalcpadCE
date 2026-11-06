@@ -550,6 +550,29 @@ namespace Calcpad.Wpf
             }
         }
 
+        // Opens the experimental AvalonEdit-based editor in its own window (additive — the main
+        // editor is untouched). First step of the editor migration.
+        private void MenuAvalonEditor_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var win = new Editor.AvalonEditorWindow { Owner = this };
+                win.SetText(GetInputText());
+                win.ApplyRequested += text =>
+                {
+                    LoadTextIntoDocument(text);
+                    ForceHighlight();
+                    if (IsAutoRun)
+                        AutoRun();
+                };
+                win.Show();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not open the code editor: " + ex.Message);
+            }
+        }
+
         // A4: converts the whole worksheet from classic nomenclature to markdown-first
         // (#md full) using the Core converter, then reloads the editor. Undoable.
         private void MenuConvertMarkdown_Click(object sender, RoutedEventArgs e)

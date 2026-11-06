@@ -1737,11 +1737,16 @@
                 <MenuItem Click="PdfButton_Click"
                           Header="{x:Static wpf:MainWindowResources.SaveAsPDF}"/>
             </MenuItem>
-            <MenuItem x:Name="MenuSnippets" Header="Snippets"/>
-            <MenuItem x:Name="MenuConvertMarkdown" Header="Convert to Markdown"
-                      Click="MenuConvertMarkdown_Click"/>
-            <MenuItem x:Name="MenuAssistant" Header="AI Assistant"
-                      Click="MenuAssistant_Click"/>
+            <MenuItem Header="Tools">
+                <MenuItem x:Name="MenuSnippets" Header="Snippets"/>
+                <MenuItem x:Name="MenuConvertMarkdown" Header="Convert to Markdown"
+                          Click="MenuConvertMarkdown_Click"/>
+                <MenuItem x:Name="MenuAvalonEditor" Header="Code Editor (new)"
+                          Click="MenuAvalonEditor_Click"/>
+                <Separator/>
+                <MenuItem x:Name="MenuAssistant" Header="AI Assistant"
+                          Click="MenuAssistant_Click"/>
+            </MenuItem>
             <MenuItem Command="ApplicationCommands.Help"
                       Header="{x:Static wpf:MainWindowResources.Help}"/>
         </Menu>
