@@ -17,13 +17,13 @@ Always author worksheets in **markdown-first mode**. Begin every worksheet with:
 - **Multi-line blocks work:** write lists (`- a` / `1. a` on consecutive lines), pipe tables
   (`| col | col |` + `|---|---|`), blockquotes (`>`) and fenced code (` ``` `) across several
   lines — they render as one block. Keep list/table lines free of `$…$` math for best results.
-- **Math is delimited** (both forms are evaluated as Calcpad):
-  - inline (preferred): markdown inline code `` `expr` `` — e.g. ``The moment is `M = q*L^2/8` ``.
-  - inline (also works): `$ expr $`.
-  - block: `$$ expr $$` on its own line, or a **fenced ``` code block** where each line is a separate
-    calculation (the multi-line form of inline `` `expr` ``).
-- A literal dollar sign is `\$`; a literal backtick is `` \` ``.
-- Tip: a trailing `=` prints a value, e.g. ``The result is `x =` ``.
+- **Formulas use `:=`** (preferred): a line with `:=` is a Calcpad calculation. Write
+  `L := 6*m`, `q := 10*kN/m`, `M := q*L^2/8` — each assigns and shows the computed result.
+- **Inline math in prose**: `$ expr $` — e.g. `The sum is $a + b$`.
+- A plain text line is just prose and never raises an error.
+- **Code is literal**: inline `` `code` `` and fenced ``` code blocks are shown verbatim, not evaluated
+  (use them to display code/notation, not to compute).
+- A literal dollar sign is `\$`.
 
 ## Math language (inside `$…$`)
 

@@ -62,19 +62,43 @@ public class MarkdownFirstTests
     }
 
     [Fact]
-    public void InlineBacktickCode_IsEvaluatedAsMath()
+    public void WalrusLine_IsEvaluatedAsFormula()
     {
-        // `2 + 3` (markdown inline code) is evaluated like $2 + 3$.
-        var html = Render("#md full\nResult: `2 + 3`\n");
-        Assert.Contains("5", html);
-        Assert.DoesNotContain("`2 + 3`", html);
+        // ':=' makes a line a Calcpad formula: L := 6 assigns and shows L.
+        var html = Render("#md full\nL := 6*2\n");
+        Assert.Contains("12", html);
     }
 
     [Fact]
-    public void BacktickAndDollar_BothWork_OnSameLine()
+    public void WalrusAssignments_ChainInOrder()
     {
-        var html = Render("#md full\n`2 + 3` and $4 + 4$\n");
-        Assert.Contains("5", html);
+        var html = Render("#md full\nL := 6\nM := L*L\n");
+        Assert.Contains("36", html);
+    }
+
+    [Fact]
+    public void ProseWithColon_IsNotAFormula_AndNeverErrors()
+    {
+        // A plain colon is prose, not ':=' — the line renders as text with no error.
+        var html = Render("#md full\nNote: measure the span first.\n");
+        Assert.Contains("measure the span first", html);
+        Assert.DoesNotContain("Error", html);
+        Assert.DoesNotContain("err", html);
+    }
+
+    [Fact]
+    public void InlineBacktickCode_IsLiteral()
+    {
+        // Backtick code is literal markdown now (':=' is the formula operator).
+        var html = Render("#md full\nUse `x := 5` to assign.\n");
+        Assert.Contains("<code>", html);
+        Assert.Contains("x := 5", html);
+    }
+
+    [Fact]
+    public void InlineDollarMath_StillEvaluated()
+    {
+        var html = Render("#md full\nThe sum is $4 + 4$.\n");
         Assert.Contains("8", html);
     }
 

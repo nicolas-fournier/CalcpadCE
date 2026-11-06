@@ -57,20 +57,13 @@ public class MarkdownBlockTests
     }
 
     [Fact]
-    public void FencedCode_EvaluatesAsMultiLineMath()
+    public void FencedCode_IsLiteral()
     {
-        // A fenced ``` block is a multi-line math block: each inner line is evaluated.
-        var html = Render("#md full\n```\n2 + 3\n6 * 7\n```\n");
-        Assert.Contains("5", html);
-        Assert.Contains("42", html);
-        Assert.DoesNotContain("<pre", html);
-    }
-
-    [Fact]
-    public void FencedMathBlock_EvaluatesAssignmentsInOrder()
-    {
-        var html = Render("#md full\n```\nL = 6\nM = L*L\n```\n");
-        Assert.Contains("36", html);
+        // A fenced ``` block is literal code (not evaluated) — ':=' is the formula operator.
+        var html = Render("#md full\n```\nx := 5\ny := 6\n```\n");
+        Assert.Contains("<pre>", html);
+        Assert.Contains("<code>", html);
+        Assert.Contains("x := 5", html);
     }
 
     [Fact]

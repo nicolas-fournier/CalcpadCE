@@ -30,7 +30,7 @@ public class MarkdownSnippetTests
         Assert.True(CalcpadSnippets.TryGet(key, out var snippet));
         // Preamble defines the placeholder variables that generic fragments reference,
         // so only genuine syntax errors (not "undefined variable") can fail this test.
-        var html = Render("#md full\n$a = 1$\n$b = 2$\n" + snippet.Body + "\n", calculate: true);
+        var html = Render("#md full\nL := 1\nq := 1\n$a = 1$\n$b = 2$\n" + snippet.Body + "\n", calculate: true);
         Assert.DoesNotContain("class=\"err\"", html);
     }
 

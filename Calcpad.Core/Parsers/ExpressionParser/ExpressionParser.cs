@@ -159,17 +159,6 @@ namespace Calcpad.Core
                     if ((textSpan[0] != '$' || !ParsePlot(textSpan)) &&
                         ParseCondition(textSpan, keyword))
                     {
-                        // #md full: a fenced code block (``` …) is a multi-line math block —
-                        // each inner line is evaluated as Calcpad (consistent with inline `expr`).
-                        if (_mdFull && _loops.Count == 0 &&
-                            !_lineCache[_currentLine].IsCached &&
-                            textSpan.TrimStart().StartsWith("```", StringComparison.Ordinal) &&
-                            TryParseFenceAsMath(code, lines, lineCount))
-                        {
-                            s = string.Empty;
-                            textSpan = s.AsSpan();
-                            continue;
-                        }
                         // #md full: accumulate consecutive plain-markdown lines into a
                         // single block so lists, tables, blockquotes and multi-paragraph
                         // prose render correctly (Markdig needs the whole block at once).
@@ -187,9 +176,15 @@ namespace Calcpad.Core
                         else
                         {
                             var skipChars = keyword == Keyword.Const ? 7 : _condition.KeywordLength;
-                            tokens = _mdFull ?
-                                GetTokensMarkdown(textSpan[skipChars..]) :
-                                GetTokens(textSpan[skipChars..]);
+                            var codeSpan = textSpan[skipChars..];
+                            if (_mdFull)
+                                // A line with ':=' (outside inline code/math) is a formula; other
+                                // lines are markdown prose (and never raise an error).
+                                tokens = IsFormulaLine(codeSpan) ?
+                                    GetTokens(codeSpan.ToString().Replace(":=", "=")) :
+                                    GetTokensMarkdown(codeSpan);
+                            else
+                                tokens = GetTokens(codeSpan);
                             if (_isMarkdownOn)
                                 ParseMarkdown(tokens);
 
@@ -275,39 +270,6 @@ namespace Calcpad.Core
             // current line and renders them as one Markdig block. Returns false (leaving
             // _currentLine untouched) when the run is a single content line, so the normal
             // per-line path still handles isolated prose / inline math.
-            // Evaluates a fenced ``` block as a multi-line math block: every non-empty inner line
-            // is parsed and rendered as a Calcpad expression. Returns false (unconsumed) when the
-            // fence is never closed, so the normal path can still handle it.
-            bool TryParseFenceAsMath(ReadOnlySpan<char> src, List<int> lineStarts, int count)
-            {
-                var start = _currentLine;
-                var close = -1;
-                for (int k = start + 1; k < count; ++k)
-                {
-                    var raw = ExtractRawLine(src, lineStarts, k);
-                    if (raw.AsSpan().TrimStart().StartsWith("```", StringComparison.Ordinal))
-                    {
-                        close = k;
-                        break;
-                    }
-                }
-                if (close < 0)
-                    return false;
-
-                for (int k = start + 1; k < close; ++k)
-                {
-                    var raw = ExtractRawLine(src, lineStarts, k);
-                    if (raw.AsSpan().IsWhiteSpace())
-                        continue;
-
-                    var tokens = new List<Token> { new(raw.Trim(), TokenTypes.Expression) };
-                    _parser.HasInputFields = false;
-                    ParseLine(tokens, Keyword.None);
-                }
-                _currentLine = close;
-                return true;
-            }
-
             bool TryRenderMarkdownBlock(ReadOnlySpan<char> src, List<int> lineStarts, int count)
             {
                 var start = _currentLine;
@@ -315,9 +277,24 @@ namespace Calcpad.Core
                 var pendingBlanks = 0;
                 var contentLines = 0;
                 var lastContent = -1;
+                var inFence = false;
                 for (int k = start; k < count; ++k)
                 {
                     var raw = ExtractRawLine(src, lineStarts, k);
+                    var isFence = raw.AsSpan().TrimStart().StartsWith("```", StringComparison.Ordinal);
+
+                    // Inside a fenced code block every line is literal — take it verbatim and don't
+                    // classify it (so `:=` / $…$ inside the fence are shown, not evaluated).
+                    if (inFence)
+                    {
+                        if (contentLines > 0) sb.Append('\n');
+                        sb.Append(raw);
+                        ++contentLines;
+                        lastContent = k;
+                        if (isFence) inFence = false; // closing fence
+                        continue;
+                    }
+
                     var kind = ClassifyMarkdownLine(raw);
                     if (kind == MarkdownLineKind.Blank)
                     {
@@ -338,6 +315,7 @@ namespace Calcpad.Core
                     sb.Append(raw);
                     ++contentLines;
                     lastContent = k;
+                    if (isFence) inFence = true; // opening fence
                 }
                 if (contentLines <= 1 || lastContent < 0)
                     return false;
@@ -570,8 +548,10 @@ namespace Calcpad.Core
                 return MarkdownLineKind.Stop;
 
             // A fenced code block (``` …) stays a block (literal code); other lines carrying
-            // inline math — $…$ or `…` — fall back to the per-line path so they're evaluated.
-            if (!t.StartsWith("```", StringComparison.Ordinal) && ContainsInlineMathDelim(t))
+            // A formula line (`:=`) or inline math (`$…$`) is evaluated per-line, not as markdown.
+            // Backtick code and fenced blocks stay literal markdown (part of the block).
+            if (!t.StartsWith("```", StringComparison.Ordinal) &&
+                (IsFormulaLine(t) || ContainsInlineMath(t)))
                 return MarkdownLineKind.Stop;
 
             // Only an explicit " _" continuation falls back to the per-line path; trailing
@@ -582,15 +562,32 @@ namespace Calcpad.Core
             return MarkdownLineKind.Content;
         }
 
-        // True if the line has an unescaped inline-math delimiter: $ (…$…$) or ` (`…`).
-        private static bool ContainsInlineMathDelim(ReadOnlySpan<char> s)
+        // True if the line has an unescaped inline-math delimiter '$' outside backtick code.
+        private static bool ContainsInlineMath(ReadOnlySpan<char> s)
         {
+            var inCode = false;
             for (int i = 0, len = s.Length; i < len; ++i)
             {
                 var c = s[i];
-                if (c == '\\')
-                    ++i;
-                else if (c == '$' || c == '`')
+                if (c == '\\') ++i;
+                else if (c == '`') inCode = !inCode;
+                else if (c == '$' && !inCode) return true;
+            }
+            return false;
+        }
+
+        // True if the line is a formula: it contains ':=' outside inline code (`…`) and math ($…$).
+        // In markdown-first mode such a line is evaluated as Calcpad (':=' means assignment).
+        private static bool IsFormulaLine(ReadOnlySpan<char> s)
+        {
+            bool inCode = false, inMath = false;
+            for (int i = 0, len = s.Length - 1; i < len; ++i)
+            {
+                var c = s[i];
+                if (c == '\\') { ++i; continue; }
+                if (c == '`') inCode = !inCode;
+                else if (c == '$') inMath = !inMath;
+                else if (c == ':' && s[i + 1] == '=' && !inCode && !inMath)
                     return true;
             }
             return false;

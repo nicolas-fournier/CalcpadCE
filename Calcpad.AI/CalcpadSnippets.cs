@@ -37,20 +37,23 @@ namespace Calcpad.AI
             new CalcpadSnippet("note", "Prose paragraph",
                 "Describe the step here, with **bold** and *italic* where useful."),
 
-            new CalcpadSnippet("math", "Inline math",
+            new CalcpadSnippet("formula", "Formula (:=)",
+                "M := q*L^2/8"),
+
+            new CalcpadSnippet("var", "Variable with unit (:=)",
+                "L := 6*m"),
+
+            new CalcpadSnippet("math", "Inline math in prose",
                 "The result is $a + b$"),
 
             new CalcpadSnippet("block", "Block math",
                 "$$ a + b $$"),
 
-            new CalcpadSnippet("var", "Variable with unit",
-                "$L = 6*m$"),
-
             new CalcpadSnippet("list", "Bulleted list",
                 "- first\n- second\n- third"),
 
             new CalcpadSnippet("table", "Table",
-                "| Quantity | Value |\n| --- | --- |\n| Length | $L = 6*m$ |"),
+                "| Quantity | Value |\n| --- | --- |\n| Length | $L$ |"),
 
             new CalcpadSnippet("if", "Condition block",
                 "#if a > b\n$a$\n#else\n$b$\n#end if"),
@@ -58,10 +61,10 @@ namespace Calcpad.AI
             new CalcpadSnippet("beam", "Simply-supported beam moment",
                 "# Simply-supported beam\n" +
                 "Span and load:\n" +
-                "$L = 6*m$\n" +
-                "$q = 10*kN/m$\n" +
+                "L := 6*m\n" +
+                "q := 10*kN/m\n" +
                 "Maximum bending moment:\n" +
-                "$M = q*L^2/8$"),
+                "M := q*L^2/8"),
         });
 
         public static bool TryGet(string key, out CalcpadSnippet snippet)

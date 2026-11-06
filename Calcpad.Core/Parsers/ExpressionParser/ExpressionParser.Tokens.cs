@@ -88,16 +88,6 @@ namespace Calcpad.Core
                     ts.Expand(); // escaped char
                     ++i;
                 }
-                else if (c == '`')
-                {
-                    // Inline code `expr` is evaluated as Calcpad math (markdown-native formulas),
-                    // exactly like $expr$. A literal backtick is \`.
-                    if (!ts.IsEmpty || inMath)
-                        AddMarkdownToken(tokens, ts.Cut(), inMath);
-
-                    ts.Reset(i + 1);
-                    inMath = !inMath;
-                }
                 else if (c == '$')
                 {
                     var isBlock = i + 1 < len && s[i + 1] == '$';

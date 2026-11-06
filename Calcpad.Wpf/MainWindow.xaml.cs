@@ -270,6 +270,9 @@ namespace Calcpad.Wpf
             RichTextBox.Visibility = Visibility.Collapsed;
             LineNumbers.Visibility = Visibility.Collapsed;
             AutoCompleteListBox.Visibility = Visibility.Hidden;
+            // Start the empty document markdown-first (replaced if a file is opened at startup).
+            CodeEditorAvalon.Text = "#md full\n";
+            CodeEditorAvalon.CaretOffset = CodeEditorAvalon.Document.TextLength;
         }
 
         // ---- Experimental AvalonEdit main editor (opt-in via Tools > Use new editor) ----
@@ -315,8 +318,13 @@ namespace Calcpad.Wpf
                     else _acId.Add(new(s));
                 }
             }
+            // Snippets: filter by key, show "key — Title" in the list, describe with Title + preview.
             foreach (var sn in Calcpad.AI.CalcpadSnippets.All)
-                _acId.Add(new Editor.CalcpadCompletionData(sn.Key, sn.Body, sn.Title, 1));
+                _acId.Add(new Editor.CalcpadCompletionData(
+                    sn.Key, sn.Body,
+                    description: sn.Title + "\n\n" + sn.Body,
+                    priority: 1,
+                    content: $"{sn.Key}  —  {sn.Title}"));
         }
 
         private void AvalonText_TextEntered(object sender, System.Windows.Input.TextCompositionEventArgs e)
@@ -794,29 +802,6 @@ namespace Calcpad.Wpf
             }
         }
 
-        // Opens the experimental AvalonEdit-based editor in its own window (additive — the main
-        // editor is untouched). First step of the editor migration.
-        private void MenuAvalonEditor_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                var win = new Editor.AvalonEditorWindow { Owner = this };
-                win.SetText(GetInputText());
-                win.ApplyRequested += text =>
-                {
-                    LoadTextIntoDocument(text);
-                    ForceHighlight();
-                    if (IsAutoRun)
-                        AutoRun();
-                };
-                win.Show();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show("Could not open the code editor: " + ex.Message);
-            }
-        }
-
         // A4: converts the whole worksheet from classic nomenclature to markdown-first
         // (#md full) using the Core converter, then reloads the editor. Undoable.
         private void MenuConvertMarkdown_Click(object sender, RoutedEventArgs e)
@@ -1083,6 +1068,21 @@ namespace Calcpad.Wpf
             SaveButton.Tag = null;
             _undoMan.Reset();
             Record();
+            SeedMarkdownDocument();
+        }
+
+        // New documents start markdown-first with an explicit '#md full' directive, so writing is
+        // prose + ':=' formulas and the mode persists in the saved file. Classic files (no such
+        // directive) open and run unchanged.
+        private void SeedMarkdownDocument()
+        {
+            if (!_useAvalon)
+                return;
+
+            _isTextChangedEnabled = false;
+            CodeEditorAvalon.Text = "#md full\n";
+            CodeEditorAvalon.CaretOffset = CodeEditorAvalon.Document.TextLength;
+            _isTextChangedEnabled = true;
         }
 
         private void Command_Open(object sender, ExecutedRoutedEventArgs e)
