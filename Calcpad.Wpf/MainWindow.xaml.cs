@@ -164,12 +164,8 @@ namespace Calcpad.Wpf
             get => WebFormButton.Tag.ToString() == "T";
             set => SetWebForm(value);
         }
-        private string InputText => _useAvalon
-            ? (CodeEditorAvalon?.Text ?? string.Empty)
-            : new TextRange(_document.ContentStart, _document.ContentEnd).Text;
-        private int InputTextLength => _useAvalon
-            ? (CodeEditorAvalon?.Document?.TextLength ?? 0)
-            : _document.ContentEnd.GetOffsetToPosition(_document.ContentStart);
+        private string InputText => CodeEditorAvalon?.Text ?? string.Empty;
+        private int InputTextLength => CodeEditorAvalon?.Document?.TextLength ?? 0;
         private SpanLineEnumerator InputTextLines => InputText.EnumerateLines();
         private bool IsCalculated
         {
@@ -2099,8 +2095,7 @@ namespace Calcpad.Wpf
         }
 
         const string Tabs = "\t\t\t\t\t\t\t\t\t\t\t\t";
-        // Returns the active editor's source: AvalonEdit when the new editor is on, else the document.
-        private string GetInputText() => _useAvalon ? (CodeEditorAvalon?.Text ?? string.Empty) : GetDocumentText();
+        private string GetInputText() => CodeEditorAvalon?.Text ?? string.Empty;
 
         private string GetDocumentText()
         {
