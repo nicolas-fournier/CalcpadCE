@@ -127,6 +127,7 @@ namespace Calcpad.Wpf
         private bool _isSaved;
         private bool _isParsing;
         private bool _isPasting;
+        private bool _useAvalon;
         private bool _isTextChangedEnabled;
         private readonly double _inputHeight;
         private bool _mustPromptUnlock;
@@ -163,7 +164,9 @@ namespace Calcpad.Wpf
             get => WebFormButton.Tag.ToString() == "T";
             set => SetWebForm(value);
         }
-        private string InputText => new TextRange(_document.ContentStart, _document.ContentEnd).Text;
+        private string InputText => _useAvalon
+            ? (CodeEditorAvalon?.Text ?? string.Empty)
+            : new TextRange(_document.ContentStart, _document.ContentEnd).Text;
         private int InputTextLength => _document.ContentEnd.GetOffsetToPosition(_document.ContentStart);
         private SpanLineEnumerator InputTextLines => InputText.EnumerateLines();
         private bool IsCalculated
@@ -251,7 +254,83 @@ namespace Calcpad.Wpf
             _findReplace.EndSearch += FindReplace_EndSearch;
             _findReplace.EndReplace += FindReplace_EndReplace;
             PopulateSnippetsMenu();
+            InitAvalonEditor();
             _isTextChangedEnabled = true;
+        }
+
+        // ---- Experimental AvalonEdit main editor (opt-in via Tools > Use new editor) ----
+
+        private void InitAvalonEditor()
+        {
+            try
+            {
+                using var stream = System.Reflection.Assembly.GetExecutingAssembly()
+                    .GetManifestResourceStream("Calcpad.Wpf.Editor.Calcpad.xshd");
+                if (stream is not null)
+                {
+                    using var reader = new System.Xml.XmlTextReader(stream);
+                    CodeEditorAvalon.SyntaxHighlighting =
+                        ICSharpCode.AvalonEdit.Highlighting.Xshd.HighlightingLoader.Load(
+                            reader, ICSharpCode.AvalonEdit.Highlighting.HighlightingManager.Instance);
+                }
+            }
+            catch { /* highlighting is optional */ }
+        }
+
+        private void MenuUseAvalon_Click(object sender, RoutedEventArgs e) =>
+            SetUseAvalon(MenuUseAvalon.IsChecked);
+
+        private void SetUseAvalon(bool on)
+        {
+            if (on == _useAvalon)
+                return;
+
+            if (on)
+            {
+                var text = GetDocumentText();
+                _useAvalon = true;
+                _isTextChangedEnabled = false;
+                CodeEditorAvalon.Text = text;
+                _isTextChangedEnabled = true;
+                CodeEditorAvalon.Visibility = Visibility.Visible;
+                RichTextBox.Visibility = Visibility.Collapsed;
+                LineNumbers.Visibility = Visibility.Collapsed;
+                AutoCompleteListBox.Visibility = Visibility.Hidden;
+                _highlighter.Defined.Get(InputTextLines, IsComplex);
+                CodeEditorAvalon.Focus();
+            }
+            else
+            {
+                var text = CodeEditorAvalon.Text;
+                _useAvalon = false;
+                CodeEditorAvalon.Visibility = Visibility.Collapsed;
+                RichTextBox.Visibility = Visibility.Visible;
+                LineNumbers.Visibility = Visibility.Visible;
+                LoadTextIntoDocument(text);
+            }
+            MenuUseAvalon.IsChecked = _useAvalon;
+            CalculateAsync();
+        }
+
+        private void CodeEditorAvalon_TextChanged(object sender, EventArgs e)
+        {
+            if (!_useAvalon || !_isTextChangedEnabled)
+                return;
+
+            _highlighter.Defined.Get(InputTextLines, IsComplex);
+            if (IsAutoRun)
+                CalculateAsync();
+        }
+
+        // Inserts text at the AvalonEdit caret (used by snippets / AI when the new editor is active).
+        private void InsertIntoAvalon(string text)
+        {
+            var norm = text.Replace("\r\n", "\n").Replace("\r", "\n");
+            var ed = CodeEditorAvalon;
+            if (ed.SelectionLength > 0)
+                ed.Document.Remove(ed.SelectionStart, ed.SelectionLength);
+            ed.Document.Insert(ed.CaretOffset, norm);
+            ed.Focus();
         }
 
         // Builds the Snippets menu from the shared markdown-first catalogue so the editor and the
@@ -596,9 +675,18 @@ namespace Calcpad.Wpf
                 AutoRun();
         }
 
-        // Replaces the editor document with the given text, mirroring the file-load path.
+        // Replaces the editor content with the given text, mirroring the file-load path.
         private void LoadTextIntoDocument(string text)
         {
+            if (_useAvalon)
+            {
+                _isTextChangedEnabled = false;
+                CodeEditorAvalon.Text = (text ?? string.Empty).Replace("\r\n", "\n").Replace("\r", "\n");
+                _isTextChangedEnabled = true;
+                _highlighter.Defined.Get(InputTextLines, IsComplex);
+                _forceHighlight = true;
+                return;
+            }
             var normalized = text.Replace("\r\n", "\n").Replace("\r", "\n");
             var lines = normalized.Split('\n');
             _isTextChangedEnabled = false;
@@ -652,7 +740,14 @@ namespace Calcpad.Wpf
         // reusing the editor's multi-line insertion path.
         internal void InsertAssistantText(string text)
         {
-            if (string.IsNullOrEmpty(text) || !RichTextBox.IsEnabled)
+            if (string.IsNullOrEmpty(text))
+                return;
+            if (_useAvalon)
+            {
+                InsertIntoAvalon(text);
+                return;
+            }
+            if (!RichTextBox.IsEnabled)
                 return;
 
             var normalized = text.Replace("\r\n", "\n").Replace("\r", "\n");
@@ -1844,6 +1939,13 @@ namespace Calcpad.Wpf
             RichTextBox.EndChange();
             _isTextChangedEnabled = true;
             _forceHighlight = true;
+            if (_useAvalon)
+            {
+                _isTextChangedEnabled = false;
+                CodeEditorAvalon.Text = GetDocumentText();
+                _isTextChangedEnabled = true;
+                _highlighter.Defined.Get(InputTextLines, IsComplex);
+            }
             return hasForm;
         }
 
@@ -1933,10 +2035,19 @@ namespace Calcpad.Wpf
             HighLighter.Clear(_currentParagraph);
             RichTextBox.EndChange();
             _isTextChangedEnabled = true;
+            if (_useAvalon)
+            {
+                _isTextChangedEnabled = false;
+                CodeEditorAvalon.Text = string.Empty;
+                _isTextChangedEnabled = true;
+            }
         }
 
         const string Tabs = "\t\t\t\t\t\t\t\t\t\t\t\t";
-        private string GetInputText()
+        // Returns the active editor's source: AvalonEdit when the new editor is on, else the document.
+        private string GetInputText() => _useAvalon ? (CodeEditorAvalon?.Text ?? string.Empty) : GetDocumentText();
+
+        private string GetDocumentText()
         {
             _stringBuilder.Clear();
             var b = _document.Blocks.FirstBlock;

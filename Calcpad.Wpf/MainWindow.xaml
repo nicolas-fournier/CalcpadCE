@@ -3,6 +3,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:wpf="clr-namespace:Calcpad.Wpf"
     xmlns:ai="clr-namespace:Calcpad.Wpf.Ai"
+    xmlns:ae="http://icsharpcode.net/sharpdevelop/avalonedit"
     xmlns:av="http://schemas.microsoft.com/expression/blend/2008" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="av" x:Class="Calcpad.Wpf.MainWindow"
     Title=" CalcpadCE"
     Height="800"
@@ -1741,8 +1742,10 @@
                 <MenuItem x:Name="MenuSnippets" Header="Snippets"/>
                 <MenuItem x:Name="MenuConvertMarkdown" Header="Convert to Markdown"
                           Click="MenuConvertMarkdown_Click"/>
-                <MenuItem x:Name="MenuAvalonEditor" Header="Code Editor (new)"
+                <MenuItem x:Name="MenuAvalonEditor" Header="Code Editor (window)"
                           Click="MenuAvalonEditor_Click"/>
+                <MenuItem x:Name="MenuUseAvalon" Header="Use new editor (beta)" IsCheckable="True"
+                          Click="MenuUseAvalon_Click"/>
                 <Separator/>
                 <MenuItem x:Name="MenuAssistant" Header="AI Assistant"
                           Click="MenuAssistant_Click"/>
@@ -1999,11 +2002,11 @@
                          Content="{x:Static wpf:MainWindowResources.Inline}"/>
         </WrapPanel>
         <TextBlock Grid.Row="0" Height="16" TextWrapping="Wrap" FontSize="11.5" VerticalAlignment="Top"
-                   Margin="330,7,0,0"
+                   Margin="358,7,0,0"
                    RenderTransformOrigin="0.291,0.394" HorizontalAlignment="Left" Width="50"
                    TextDecorations="{x:Null}" Foreground="#DA000000"
                    Text="{x:Static wpf:MainWindowResources.Numbers}" />
-        <WrapPanel Grid.Row="0" Margin="329,27,0,0" HorizontalAlignment="Left" VerticalAlignment="Top" Height="20">
+        <WrapPanel Grid.Row="0" Margin="357,27,0,0" HorizontalAlignment="Left" VerticalAlignment="Top" Height="20">
             <RadioButton Checked="ModeRadioButton_Checked" x:Name="Real" GroupName="Mode"
                          TabIndex="1" IsChecked="True"  Height="20" Margin="0,0,2,0"
                          Style="{StaticResource Toggle}"
@@ -2579,6 +2582,13 @@
                             </Paragraph>
                         </FlowDocument>
                     </RichTextBox>
+                    <!-- Experimental AvalonEdit editor, overlaid on the Code pane; shown when the
+                         "Use new editor" toggle is on. Hosts the same .cpd source. -->
+                    <ae:TextEditor x:Name="CodeEditorAvalon" Grid.Row="0" Visibility="Collapsed"
+                                   Margin="6,33,5,24" FontFamily="Consolas" FontSize="14"
+                                   ShowLineNumbers="True" Background="White"
+                                   HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                                   TextChanged="CodeEditorAvalon_TextChanged"/>
                     <Canvas Grid.Row="0" x:Name="LineNumbers" HorizontalAlignment="Left" Margin="6,33,0,24" Width="40"/>
                     <Border Grid.Row="0" BorderThickness="0,0,1,0" HorizontalAlignment="Left" Margin="48,28,0,24" Width="2" BorderBrush="#FFE3E3E3"/>
                     <ListBox Grid.Row="0" x:Name="AutoCompleteListBox"
