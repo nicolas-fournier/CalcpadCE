@@ -199,10 +199,7 @@
     </Window.CommandBindings>
     <Grid x:Name="MainGrid" MinWidth="1190">
         <Grid.Background>
-            <LinearGradientBrush EndPoint="0.5,1" StartPoint="0.5,0">
-                <GradientStop Color="{DynamicResource {x:Static SystemColors.ControlColorKey}}" Offset="0"/>
-                <GradientStop Color="#FFFBFBFB" Offset="0.5"/>
-            </LinearGradientBrush>
+            <SolidColorBrush Color="#FFEEF1F5"/>
         </Grid.Background>
         <Grid.RowDefinitions>
             <RowDefinition Height="50"/>
@@ -2326,14 +2323,8 @@
                 <ColumnDefinition Width="120*" />
             </Grid.ColumnDefinitions>
             <GroupBox x:Name="InputFrame" Header="{x:Static wpf:MainWindowResources.Code}"
-                      FontSize="13" FontFamily="Segoe UI Semibold"
-                      Margin="6,1,4,1" MinWidth="580" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}">
-                <GroupBox.Background>
-                    <LinearGradientBrush EndPoint="0.5,1" StartPoint="0.5,0">
-                        <GradientStop Color="White" Offset="0.543"/>
-                        <GradientStop Color="#FFF0F0F0" Offset="1"/>
-                    </LinearGradientBrush>
-                </GroupBox.Background>
+                      FontSize="13" FontFamily="Segoe UI Semibold" Foreground="#FF5A6678"
+                      Margin="6,1,4,1" MinWidth="580" BorderBrush="#FFDCE2EA" Background="White">
                 <Grid x:Name="InputGrid" Margin="0,0,0,1">
                     <Grid.RowDefinitions>
                         <RowDefinition/>
@@ -2863,9 +2854,9 @@
                 </Grid>
             </GroupBox>
             <GroupBox x:Name="OutputFrame" Grid.Column="2"
-                      FontFamily="Segoe UI Semibold" FontWeight="Bold"  FontSize="13"
+                      FontFamily="Segoe UI Semibold" FontWeight="Bold"  FontSize="13" Foreground="#FF5A6678"
                       VerticalContentAlignment="Stretch" Margin="4,1,6,1"
-                      BorderBrush="#AACCCCCC" Background="White"
+                      BorderBrush="#FFDCE2EA" Background="White"
                       Header="{x:Static wpf:MainWindowResources.Output}" >
                 <Wpf:WebView2 x:Name="WebViewer" Margin="5,5,5,5" KeyUp="WebViewer_KeyUp" PreviewKeyDown="WebViewer_PreviewKeyDown" NavigationCompleted="WebViewer_NavigationCompleted" WebMessageReceived="WebViewer_WebMessageReceived" />
             </GroupBox>
