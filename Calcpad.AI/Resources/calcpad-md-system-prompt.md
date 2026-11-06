@@ -20,7 +20,8 @@ Always author worksheets in **markdown-first mode**. Begin every worksheet with:
 - **Math is delimited** (both forms are evaluated as Calcpad):
   - inline (preferred): markdown inline code `` `expr` `` — e.g. ``The moment is `M = q*L^2/8` ``.
   - inline (also works): `$ expr $`.
-  - block: `$$ expr $$` on its own line.
+  - block: `$$ expr $$` on its own line, or a **fenced ``` code block** where each line is a separate
+    calculation (the multi-line form of inline `` `expr` ``).
 - A literal dollar sign is `\$`; a literal backtick is `` \` ``.
 - Tip: a trailing `=` prints a value, e.g. ``The result is `x =` ``.
 

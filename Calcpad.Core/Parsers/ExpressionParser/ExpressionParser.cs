@@ -159,8 +159,19 @@ namespace Calcpad.Core
                     if ((textSpan[0] != '$' || !ParsePlot(textSpan)) &&
                         ParseCondition(textSpan, keyword))
                     {
+                        // #md full: a fenced code block (``` …) is a multi-line math block —
+                        // each inner line is evaluated as Calcpad (consistent with inline `expr`).
+                        if (_mdFull && _loops.Count == 0 &&
+                            !_lineCache[_currentLine].IsCached &&
+                            textSpan.TrimStart().StartsWith("```", StringComparison.Ordinal) &&
+                            TryParseFenceAsMath(code, lines, lineCount))
+                        {
+                            s = string.Empty;
+                            textSpan = s.AsSpan();
+                            continue;
+                        }
                         // #md full: accumulate consecutive plain-markdown lines into a
-                        // single block so lists, tables, fenced code and multi-paragraph
+                        // single block so lists, tables, blockquotes and multi-paragraph
                         // prose render correctly (Markdig needs the whole block at once).
                         if (_mdFull && _loops.Count == 0 &&
                             !_lineCache[_currentLine].IsCached &&
@@ -264,6 +275,39 @@ namespace Calcpad.Core
             // current line and renders them as one Markdig block. Returns false (leaving
             // _currentLine untouched) when the run is a single content line, so the normal
             // per-line path still handles isolated prose / inline math.
+            // Evaluates a fenced ``` block as a multi-line math block: every non-empty inner line
+            // is parsed and rendered as a Calcpad expression. Returns false (unconsumed) when the
+            // fence is never closed, so the normal path can still handle it.
+            bool TryParseFenceAsMath(ReadOnlySpan<char> src, List<int> lineStarts, int count)
+            {
+                var start = _currentLine;
+                var close = -1;
+                for (int k = start + 1; k < count; ++k)
+                {
+                    var raw = ExtractRawLine(src, lineStarts, k);
+                    if (raw.AsSpan().TrimStart().StartsWith("```", StringComparison.Ordinal))
+                    {
+                        close = k;
+                        break;
+                    }
+                }
+                if (close < 0)
+                    return false;
+
+                for (int k = start + 1; k < close; ++k)
+                {
+                    var raw = ExtractRawLine(src, lineStarts, k);
+                    if (raw.AsSpan().IsWhiteSpace())
+                        continue;
+
+                    var tokens = new List<Token> { new(raw.Trim(), TokenTypes.Expression) };
+                    _parser.HasInputFields = false;
+                    ParseLine(tokens, Keyword.None);
+                }
+                _currentLine = close;
+                return true;
+            }
+
             bool TryRenderMarkdownBlock(ReadOnlySpan<char> src, List<int> lineStarts, int count)
             {
                 var start = _currentLine;

@@ -50,14 +50,16 @@
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="true">
                                 <Setter Property="Foreground" Value="Black"/>
-                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#A03C7FB1"/>
-                                <Setter TargetName="ButtonBorder" Property="Background" Value="#A0BEE6FD"/>
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#FF2F6FED"/>
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#E7EEFC"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
         </Style>
+        <SolidColorBrush x:Key="HoverBg" Color="#E7EEFC"/>
+        <SolidColorBrush x:Key="HoverBorder" Color="#2F6FED"/>
         <Style x:Key="RoundButton" TargetType="{x:Type Button}">
             <Setter Property="Width" Value="30"/>
             <Setter Property="Height" Value="26"/>
@@ -84,8 +86,8 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="true">
-                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#A03C7FB1"/>
-                                <Setter TargetName="ButtonBorder" Property="Background" Value="#A0BEE6FD"/>
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#FF2F6FED"/>
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#E7EEFC"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -115,8 +117,8 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="true">
-                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#A03C7FB1"/>
-                                <Setter TargetName="ButtonBorder" Property="Background" Value="#A0BEE6FD"/>
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#FF2F6FED"/>
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#E7EEFC"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -158,14 +160,14 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="ButtonBorder" Property="Background" Value="#666"/>
-                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#444"/>
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#2F6FED"/>
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#2F6FED"/>
                                 <Setter Property="Foreground" Value="White"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="true">
                                 <Setter Property="Foreground" Value="Black"/>
-                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#A03C7FB1"/>
-                                <Setter TargetName="ButtonBorder" Property="Background" Value="#A0BEE6FD"/>
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#FF2F6FED"/>
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#E7EEFC"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
