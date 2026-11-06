@@ -427,13 +427,7 @@ namespace Calcpad.Wpf
         }
 
         // Inserts text at the caret in whichever editor is active.
-        private void InsertAtCaret(string text)
-        {
-            if (_useAvalon)
-                InsertIntoAvalon(text);
-            else
-                _insertManager.InsertText(text);
-        }
+        private void InsertAtCaret(string text) => InsertIntoAvalon(text);
 
         // Keypad / format / insert-toolbar button handling for the AvalonEdit editor.
         private void HandleAvalonButton(string tag)
@@ -650,66 +644,7 @@ namespace Calcpad.Wpf
                 else
                     tag = tag[..(index - 1)];
             }
-            if (_useAvalon)
-            {
-                HandleAvalonButton(tag);
-                return;
-            }
-            RichTextBox.BeginChange();
-            if (tag.Contains('‖'))
-            {
-                if (tag.StartsWith("‖#"))
-                    _insertManager.InsertMarkdownHeading(tag);
-                else if (tag.StartsWith("<p>", StringComparison.OrdinalIgnoreCase) ||
-                    tag.StartsWith("<h", StringComparison.OrdinalIgnoreCase) &&
-                    !tag.Equals("<hr/>‖", StringComparison.OrdinalIgnoreCase))
-                    _insertManager.InsertHtmlHeading(tag);
-                else if (!_insertManager.InsertInline(tag))
-                    Dispatcher.InvokeAsync(() =>
-                    MessageBox.Show(
-                        MainWindowResources.Inline_Html_elements_must_not_cross_text_lines,
-                        "Calcpad", MessageBoxButton.OK, MessageBoxImage.Stop));
-            }
-            else if (tag.Contains('§'))
-                InsertLines(tag, "§", false);
-            else switch (tag)
-                {
-                    case null or "": break;
-                    case "AC": RemoveLine(); break;
-                    case "C": _insertManager.RemoveChar(); break;
-                    case "Enter": _insertManager.InsertLine(); break;
-                    default:
-                        if (tag[0] == '#' ||
-                            tag[0] == '$' && (
-                                tag.StartsWith("$plot", StringComparison.OrdinalIgnoreCase) ||
-                                tag.StartsWith("$map", StringComparison.OrdinalIgnoreCase)
-                            ))
-                        {
-                            var p = RichTextBox.Selection.End.Paragraph;
-                            if (p is not null && p.ContentStart?.GetOffsetToPosition(p.ContentEnd) > 0)
-                            {
-                                var tp = p.ContentEnd.InsertParagraphBreak();
-                                tp.InsertTextInRun(tag);
-                                p = tp.Paragraph;
-                                var lineNumber = GetLineNumber(p);
-                                _highlighter.Parse(p, IsComplex, lineNumber, true);
-                                SetAutoIndent();
-                                tp = p.ContentEnd;
-                                RichTextBox.Selection.Select(tp, tp);
-                            }
-                            else
-                                _insertManager.InsertText(tag);
-                        }
-                        else
-                            _insertManager.InsertText(tag);
-                        break;
-                }
-            if (tag == "Enter")
-                CalculateAsync();
-
-            RichTextBox.EndChange();
-            RichTextBox.Focus();
-            Keyboard.Focus(RichTextBox);
+            HandleAvalonButton(tag);
         }
 
         private void InsertLines(string tag, string delimiter, bool comment)
@@ -825,41 +760,13 @@ namespace Calcpad.Wpf
                 AutoRun();
         }
 
-        // Replaces the editor content with the given text, mirroring the file-load path.
+        // Replaces the editor content with the given text (AvalonEdit).
         private void LoadTextIntoDocument(string text)
         {
-            if (_useAvalon)
-            {
-                _isTextChangedEnabled = false;
-                CodeEditorAvalon.Text = (text ?? string.Empty).Replace("\r\n", "\n").Replace("\r", "\n");
-                _isTextChangedEnabled = true;
-                _highlighter.Defined.Get(InputTextLines, IsComplex);
-                _forceHighlight = true;
-                return;
-            }
-            var normalized = text.Replace("\r\n", "\n").Replace("\r", "\n");
-            var lines = normalized.Split('\n');
             _isTextChangedEnabled = false;
-            RichTextBox.BeginChange();
-            _document.Blocks.Clear();
-            _highlighter.Defined.Get(normalized.AsSpan().EnumerateLines(), IsComplex);
-            foreach (var line in lines)
-                _document.Blocks.Add(new Paragraph(new Run(line)));
-
-            if (_document.Blocks.Count == 0)
-                _document.Blocks.Add(new Paragraph(new Run()));
-
-            var last = _document.Blocks.LastBlock;
-            if (last.ContentStart.GetOffsetToPosition(last.ContentEnd) == 0 &&
-                _document.Blocks.Count > 1)
-                _document.Blocks.Remove(last);
-
-            _currentParagraph = _document.Blocks.FirstBlock as Paragraph;
-            _currentLineNumber = 1;
-            _undoMan.Reset();
-            Record();
-            RichTextBox.EndChange();
+            CodeEditorAvalon.Text = (text ?? string.Empty).Replace("\r\n", "\n").Replace("\r", "\n");
             _isTextChangedEnabled = true;
+            _highlighter.Defined.Get(InputTextLines, IsComplex);
             _forceHighlight = true;
         }
 
@@ -890,25 +797,8 @@ namespace Calcpad.Wpf
         // reusing the editor's multi-line insertion path.
         internal void InsertAssistantText(string text)
         {
-            if (string.IsNullOrEmpty(text))
-                return;
-            if (_useAvalon)
-            {
+            if (!string.IsNullOrEmpty(text))
                 InsertIntoAvalon(text);
-                return;
-            }
-            if (!RichTextBox.IsEnabled)
-                return;
-
-            var normalized = text.Replace("\r\n", "\n").Replace("\r", "\n");
-            _isTextChangedEnabled = false;
-            RichTextBox.BeginChange();
-            InsertLines(normalized, "\n", false);
-            RichTextBox.EndChange();
-            _isTextChangedEnabled = true;
-            ForceHighlight();
-            CalculateAsync();
-            RichTextBox.Focus();
         }
 
         private async Task AutoRun(bool syncScroll = false)
