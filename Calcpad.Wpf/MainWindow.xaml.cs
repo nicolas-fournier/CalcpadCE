@@ -260,6 +260,11 @@ namespace Calcpad.Wpf
 
         // ---- Experimental AvalonEdit main editor (opt-in via Tools > Use new editor) ----
 
+        private ICSharpCode.AvalonEdit.CodeCompletion.CompletionWindow _avalonCompletion;
+        private System.Collections.Generic.List<Editor.CalcpadCompletionData> _acId;
+        private System.Collections.Generic.List<Editor.CalcpadCompletionData> _acDir;
+        private System.Collections.Generic.List<Editor.CalcpadCompletionData> _acMethod;
+
         private void InitAvalonEditor()
         {
             try
@@ -275,6 +280,95 @@ namespace Calcpad.Wpf
                 }
             }
             catch { /* highlighting is optional */ }
+
+            BuildAvalonCompletionSets();
+            CodeEditorAvalon.TextArea.TextEntered += AvalonText_TextEntered;
+        }
+
+        // Partitions the existing completion catalogue (shared with the classic editor) into
+        // #directives, $methods and identifiers (functions/units), and adds markdown snippets.
+        private void BuildAvalonCompletionSets()
+        {
+            _acId = new();
+            _acDir = new();
+            _acMethod = new();
+            foreach (var obj in AutoCompleteListBox.Items)
+            {
+                if (obj is System.Windows.Controls.ListBoxItem li && li.Content is string s && s.Length > 0)
+                {
+                    if (s[0] == '#') _acDir.Add(new(s));
+                    else if (s[0] == '$') _acMethod.Add(new(s));
+                    else _acId.Add(new(s));
+                }
+            }
+            foreach (var sn in Calcpad.AI.CalcpadSnippets.All)
+                _acId.Add(new Editor.CalcpadCompletionData(sn.Key, sn.Body, sn.Title, 1));
+        }
+
+        private void AvalonText_TextEntered(object sender, System.Windows.Input.TextCompositionEventArgs e)
+        {
+            if (!_useAvalon || _avalonCompletion is not null || string.IsNullOrEmpty(e.Text))
+                return;
+
+            var ch = e.Text[0];
+            var doc = CodeEditorAvalon.Document;
+            var caret = CodeEditorAvalon.CaretOffset;
+            int start;
+            System.Collections.Generic.IEnumerable<Editor.CalcpadCompletionData> items;
+
+            if (ch == '#') { start = caret - 1; items = _acDir; }
+            else if (ch == '$') { start = caret - 1; items = _acMethod; }
+            else if (char.IsLetter(ch))
+            {
+                start = caret - 1;
+                while (start > 0 && IsIdentChar(doc.GetCharAt(start - 1)))
+                    --start;
+                items = BuildIdentifierItems();
+            }
+            else
+                return;
+
+            if (start < 0)
+                start = 0;
+
+            var w = new ICSharpCode.AvalonEdit.CodeCompletion.CompletionWindow(CodeEditorAvalon.TextArea)
+            {
+                StartOffset = start,
+                CloseWhenCaretAtBeginning = true
+            };
+            foreach (var it in items)
+                w.CompletionList.CompletionData.Add(it);
+
+            if (w.CompletionList.CompletionData.Count == 0)
+                return;
+
+            w.Closed += (o, a) => _avalonCompletion = null;
+            _avalonCompletion = w;
+            w.Show();
+        }
+
+        private static bool IsIdentChar(char c) => char.IsLetterOrDigit(c) || c == '_';
+
+        private System.Collections.Generic.List<Editor.CalcpadCompletionData> BuildIdentifierItems()
+        {
+            var list = new System.Collections.Generic.List<Editor.CalcpadCompletionData>(_acId);
+            try
+            {
+                var d = _highlighter.Defined;
+                AddDefs(list, d.Variables);
+                AddDefs(list, d.FunctionDefs);
+                AddDefs(list, d.Units);
+            }
+            catch { /* best effort */ }
+            return list;
+        }
+
+        private static void AddDefs(System.Collections.Generic.List<Editor.CalcpadCompletionData> list,
+            System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, int>> defs)
+        {
+            if (defs is null) return;
+            foreach (var kv in defs)
+                list.Add(new Editor.CalcpadCompletionData(kv.Key, null, null, 2));
         }
 
         private void MenuUseAvalon_Click(object sender, RoutedEventArgs e) =>
