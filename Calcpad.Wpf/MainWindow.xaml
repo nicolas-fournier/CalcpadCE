@@ -1742,10 +1742,6 @@
                 <MenuItem x:Name="MenuSnippets" Header="Snippets"/>
                 <MenuItem x:Name="MenuConvertMarkdown" Header="Convert to Markdown"
                           Click="MenuConvertMarkdown_Click"/>
-                <MenuItem x:Name="MenuAvalonEditor" Header="Code Editor (window)"
-                          Click="MenuAvalonEditor_Click"/>
-                <MenuItem x:Name="MenuUseAvalon" Header="Use new editor (beta)" IsCheckable="True"
-                          Click="MenuUseAvalon_Click"/>
                 <Separator/>
                 <MenuItem x:Name="MenuAssistant" Header="AI Assistant"
                           Click="MenuAssistant_Click"/>

@@ -257,7 +257,19 @@ namespace Calcpad.Wpf
             _findReplace.EndReplace += FindReplace_EndReplace;
             PopulateSnippetsMenu();
             InitAvalonEditor();
+            EnableAvalonEditor();
             _isTextChangedEnabled = true;
+        }
+
+        // AvalonEdit is the editor: show it, retire the old RichTextBox surface.
+        private void EnableAvalonEditor()
+        {
+            _useAvalon = true;
+            CodeEditorAvalon.Visibility = Visibility.Visible;
+            CodeEditorAvalon.IsReadOnly = true; // unlocked once WebView2 is ready
+            RichTextBox.Visibility = Visibility.Collapsed;
+            LineNumbers.Visibility = Visibility.Collapsed;
+            AutoCompleteListBox.Visibility = Visibility.Hidden;
         }
 
         // ---- Experimental AvalonEdit main editor (opt-in via Tools > Use new editor) ----
@@ -309,12 +321,22 @@ namespace Calcpad.Wpf
 
         private void AvalonText_TextEntered(object sender, System.Windows.Input.TextCompositionEventArgs e)
         {
-            if (!_useAvalon || _avalonCompletion is not null || string.IsNullOrEmpty(e.Text))
+            if (!_useAvalon || string.IsNullOrEmpty(e.Text))
                 return;
 
             var ch = e.Text[0];
             var doc = CodeEditorAvalon.Document;
             var caret = CodeEditorAvalon.CaretOffset;
+
+            // A window is already open: let it filter, but close it on a clear terminator so a
+            // following Enter inserts a newline instead of committing a completion.
+            if (_avalonCompletion is not null)
+            {
+                if (!IsIdentChar(ch) && ch != '#' && ch != '$')
+                    _avalonCompletion.Close();
+                return;
+            }
+
             int start;
             System.Collections.Generic.IEnumerable<Editor.CalcpadCompletionData> items;
 
@@ -322,9 +344,11 @@ namespace Calcpad.Wpf
             else if (ch == '$') { start = caret - 1; items = _acMethod; }
             else if (char.IsLetter(ch))
             {
+                // Only open at the start of a word (the char before isn't an identifier char),
+                // to avoid popups mid-identifier.
+                if (caret >= 2 && IsIdentChar(doc.GetCharAt(caret - 2)))
+                    return;
                 start = caret - 1;
-                while (start > 0 && IsIdentChar(doc.GetCharAt(start - 1)))
-                    --start;
                 items = BuildIdentifierItems();
             }
             else
@@ -373,41 +397,6 @@ namespace Calcpad.Wpf
                 list.Add(new Editor.CalcpadCompletionData(kv.Key, null, null, 2));
         }
 
-        private void MenuUseAvalon_Click(object sender, RoutedEventArgs e) =>
-            SetUseAvalon(MenuUseAvalon.IsChecked);
-
-        private void SetUseAvalon(bool on)
-        {
-            if (on == _useAvalon)
-                return;
-
-            if (on)
-            {
-                var text = GetDocumentText();
-                _useAvalon = true;
-                _isTextChangedEnabled = false;
-                CodeEditorAvalon.Text = text;
-                _isTextChangedEnabled = true;
-                CodeEditorAvalon.Visibility = Visibility.Visible;
-                RichTextBox.Visibility = Visibility.Collapsed;
-                LineNumbers.Visibility = Visibility.Collapsed;
-                AutoCompleteListBox.Visibility = Visibility.Hidden;
-                _highlighter.Defined.Get(InputTextLines, IsComplex);
-                CodeEditorAvalon.Focus();
-            }
-            else
-            {
-                var text = CodeEditorAvalon.Text;
-                _useAvalon = false;
-                CodeEditorAvalon.Visibility = Visibility.Collapsed;
-                RichTextBox.Visibility = Visibility.Visible;
-                LineNumbers.Visibility = Visibility.Visible;
-                LoadTextIntoDocument(text);
-            }
-            MenuUseAvalon.IsChecked = _useAvalon;
-            CalculateAsync();
-        }
-
         private void CodeEditorAvalon_TextChanged(object sender, EventArgs e)
         {
             if (!_useAvalon || !_isTextChangedEnabled)
@@ -427,6 +416,81 @@ namespace Calcpad.Wpf
                 ed.Document.Remove(ed.SelectionStart, ed.SelectionLength);
             ed.Document.Insert(ed.CaretOffset, norm);
             ed.Focus();
+        }
+
+        // Inserts text at the caret in whichever editor is active.
+        private void InsertAtCaret(string text)
+        {
+            if (_useAvalon)
+                InsertIntoAvalon(text);
+            else
+                _insertManager.InsertText(text);
+        }
+
+        // Keypad / format / insert-toolbar button handling for the AvalonEdit editor.
+        private void HandleAvalonButton(string tag)
+        {
+            var ed = CodeEditorAvalon;
+            switch (tag)
+            {
+                case null or "":
+                    return;
+                case "AC": // remove current line
+                    {
+                        var ln = ed.Document.GetLineByOffset(ed.CaretOffset);
+                        ed.Document.Remove(ln.Offset, ln.TotalLength);
+                        ed.Focus();
+                        CalculateAsync();
+                        return;
+                    }
+                case "C": // backspace
+                    if (ed.SelectionLength > 0)
+                        ed.Document.Remove(ed.SelectionStart, ed.SelectionLength);
+                    else if (ed.CaretOffset > 0)
+                        ed.Document.Remove(ed.CaretOffset - 1, 1);
+                    ed.Focus();
+                    return;
+                case "Enter":
+                    InsertIntoAvalon("\n");
+                    CalculateAsync();
+                    return;
+            }
+
+            if (tag.Contains('‖'))
+            {
+                // Wrap the selection: parts before/after the first two ‖ markers.
+                var parts = tag.Split('‖');
+                var before = parts.Length > 0 ? parts[0] : string.Empty;
+                var after = parts.Length > 1 ? parts[1] : string.Empty;
+                var sel = ed.SelectedText ?? string.Empty;
+                var insert = before + sel + after;
+                if (ed.SelectionLength > 0)
+                    ed.Document.Replace(ed.SelectionStart, ed.SelectionLength, insert);
+                else
+                    ed.Document.Insert(ed.CaretOffset, insert);
+                ed.Focus();
+                return;
+            }
+
+            if (tag.Contains('§'))
+            {
+                InsertIntoAvalon(tag.Replace("§", "\n"));
+                return;
+            }
+
+            // Block directives / plots go on their own line.
+            if (tag.Length > 0 &&
+                (tag[0] == '#' ||
+                 tag.StartsWith("$plot", StringComparison.OrdinalIgnoreCase) ||
+                 tag.StartsWith("$map", StringComparison.OrdinalIgnoreCase)))
+            {
+                var line = ed.Document.GetLineByOffset(ed.CaretOffset);
+                var prefix = line.Length == 0 ? string.Empty : "\n";
+                InsertIntoAvalon(prefix + tag + "\n");
+                return;
+            }
+
+            InsertIntoAvalon(tag);
         }
 
         // Builds the Snippets menu from the shared markdown-first catalogue so the editor and the
@@ -577,6 +641,11 @@ namespace Calcpad.Wpf
                     tag = tag[index..];
                 else
                     tag = tag[..(index - 1)];
+            }
+            if (_useAvalon)
+            {
+                HandleAvalonButton(tag);
+                return;
             }
             RichTextBox.BeginChange();
             if (tag.Contains('‖'))
@@ -936,7 +1005,7 @@ namespace Calcpad.Wpf
                     var tp = p.ContentEnd.InsertParagraphBreak();
                     RichTextBox.Selection.Select(tp, tp);
                 }
-                _insertManager.InsertText(data);
+                InsertAtCaret(data);
             }
             else
             {
@@ -2587,7 +2656,7 @@ namespace Calcpad.Wpf
         private void InsertFileInclude(string filePath)
         {
             var path = BuildLinkedPath(filePath);
-            _insertManager.InsertText($"#include {path}\n");
+            InsertAtCaret($"#include {path}\n");
         }
 
         private void InsertFunctionReference(string filePath, LibraryFunction fn)
@@ -2595,7 +2664,7 @@ namespace Calcpad.Wpf
             EnsureIncludeAtTop(filePath);
             // Wrap the args in `{…}` so InsertManager.SelectInsertedText highlights them for quick replacement.
             var signature = string.IsNullOrEmpty(fn.Signature) ? fn.Name : $"{fn.Name}({{{fn.Signature}}})";
-            _insertManager.InsertText($"' {signature}\n");
+            InsertAtCaret($"' {signature}\n");
         }
 
         /// Adds an #include directive for filePath at the top of the document if one isn't already
@@ -2727,7 +2796,7 @@ namespace Calcpad.Wpf
         private void GreekLetter_MouseUp(object sender, MouseButtonEventArgs e)
         {
             var tb = (TextBlock)sender;
-            _insertManager.InsertText(tb.Text);
+            InsertAtCaret(tb.Text);
         }
 
         private void EquationRadioButton_Checked(object sender, RoutedEventArgs e)
@@ -2881,7 +2950,7 @@ namespace Calcpad.Wpf
                     {
                         char c = LatinGreekChar(s[0]);
                         if (c != s[0])
-                            _insertManager.InsertText(c.ToString());
+                            InsertAtCaret(c.ToString());
                         else
                             sel.Select(cp, cp);
                     }
@@ -4321,6 +4390,7 @@ namespace Calcpad.Wpf
             );
             await WebViewer.EnsureCoreWebView2Async(env);
             RichTextBox.IsEnabled = true;
+            CodeEditorAvalon.IsReadOnly = false;
             WebViewer.CoreWebView2.SetVirtualHostNameToFolderMapping(
                 "calcpad.local",
                  AppInfo.DocPath,
