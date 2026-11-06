@@ -167,7 +167,9 @@ namespace Calcpad.Wpf
         private string InputText => _useAvalon
             ? (CodeEditorAvalon?.Text ?? string.Empty)
             : new TextRange(_document.ContentStart, _document.ContentEnd).Text;
-        private int InputTextLength => _document.ContentEnd.GetOffsetToPosition(_document.ContentStart);
+        private int InputTextLength => _useAvalon
+            ? (CodeEditorAvalon?.Document?.TextLength ?? 0)
+            : _document.ContentEnd.GetOffsetToPosition(_document.ContentStart);
         private SpanLineEnumerator InputTextLines => InputText.EnumerateLines();
         private bool IsCalculated
         {
@@ -2444,7 +2446,9 @@ namespace Calcpad.Wpf
             else
                 _parser.Settings.Units = "m";
 
-            if (!SetInputFields(await _wv2Warper.GetInputFieldsAsync()))
+            var fields = await _wv2Warper.GetInputFieldsAsync();
+            var ok = _useAvalon ? SetInputFieldsAvalon(fields) : SetInputFields(fields);
+            if (!ok)
             {
                 ShowErrorMessage(MainWindowResources.Error_Invalid_number_Please_correct_and_then_try_again);
                 IsCalculated = false;
@@ -3853,6 +3857,60 @@ namespace Calcpad.Wpf
             return true;
         }
 
+
+        // AvalonEdit counterpart of SetInputFields: injects the form values (as the \v-encoded
+        // input markers Calcpad expects) back into the AvalonEdit source, line by line, so the
+        // recalculation (which reads InputText → AvalonEdit) uses them and they persist on save.
+        private bool SetInputFieldsAvalon(string[] fields)
+        {
+            if (fields is null ||
+                fields.Length == 0 ||
+                fields.Length == 1 && string.IsNullOrEmpty(fields[0]))
+                return true;
+
+            if (!ValidateInputFields(fields))
+                return false;
+
+            var lines = CodeEditorAvalon.Text.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
+            var outSb = new StringBuilder(CodeEditorAvalon.Text.Length + 32);
+            var values = new Queue<string>();
+            var i = 0;
+            var fline = 0;
+            for (int line = 1; line <= lines.Length; ++line)
+            {
+                values.Clear();
+                while (i < fields.Length)
+                {
+                    var s = fields[i].AsSpan();
+                    if (s.Length > 0)
+                    {
+                        var j = s.IndexOf(':');
+                        if (j < 0 || !int.TryParse(s[..j], out fline))
+                            fline = 0;
+
+                        if (fline > line)
+                            break;
+
+                        values.Enqueue(s[(j + 1)..].ToString().Trim());
+                    }
+                    ++i;
+                }
+                var lineText = lines[line - 1];
+                _stringBuilder.Clear();
+                if (values.Count != 0 && MacroParser.SetLineInputFields(lineText.TrimEnd(), _stringBuilder, values, true))
+                    outSb.Append(_stringBuilder.ToString());
+                else
+                    outSb.Append(lineText);
+
+                if (line < lines.Length)
+                    outSb.Append('\n');
+            }
+            _stringBuilder.Clear();
+            _isTextChangedEnabled = false;
+            CodeEditorAvalon.Text = outSb.ToString();
+            _isTextChangedEnabled = true;
+            return true;
+        }
 
         private bool SetInputFields(string[] fields)
         {
