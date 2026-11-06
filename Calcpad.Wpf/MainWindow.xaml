@@ -43,10 +43,10 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="true">
-                                <Setter Property="Foreground" Value="Black"/>
-                                <Setter Property="FontWeight" Value="Medium"/>
-                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#AAA"/>
-                                <Setter TargetName="ButtonBorder" Property="Background" Value="#FFF"/>
+                                <Setter Property="Foreground" Value="#FF2F6FED"/>
+                                <Setter Property="FontWeight" Value="SemiBold"/>
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#FF2F6FED"/>
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#E7EEFC"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="true">
                                 <Setter Property="Foreground" Value="Black"/>
@@ -119,6 +119,24 @@
                             <Trigger Property="IsMouseOver" Value="true">
                                 <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#FF2F6FED"/>
                                 <Setter TargetName="ButtonBorder" Property="Background" Value="#E7EEFC"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="RunButton" TargetType="{x:Type Button}">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Button}">
+                        <Border x:Name="rb" CornerRadius="6" Background="#E3F6EE"
+                                BorderBrush="#FF0C9F6E" BorderThickness="1" Padding="2">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="true">
+                                <Setter TargetName="rb" Property="Background" Value="#FFCDEFE0"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -1892,12 +1910,12 @@
                 <Image Source="Resources/form.png" Width="20" Height="20" VerticalAlignment="Center"
                     HorizontalAlignment="Center"/>
             </Button>
-            <Button Click="CalcButton_Click" x:Name="CalcButton" Tag="F" Height="24"  Width="24"
+            <Button Click="CalcButton_Click" x:Name="CalcButton" Tag="F" Height="26"  Width="26"
                 VerticalAlignment="Center" HorizontalAlignment="Left"
-                Focusable="false" IsTabStop="false" Background="{x:Null}"
-                Canvas.Left="79" BorderBrush="{x:Null}"
+                Focusable="false" IsTabStop="false" Style="{StaticResource RunButton}"
+                Canvas.Left="79"
                 ToolTip="{x:Static wpf:MainWindowResources.RunAndDisplayOutput}">
-                <Image Source="Resources/play.png" Width="20" Height="20" VerticalAlignment="Center"
+                <Image Source="Resources/play.png" Width="18" Height="18" VerticalAlignment="Center"
                     HorizontalAlignment="Center"/>
             </Button>
             <CheckBox x:Name="AutoRunCheckBox" Content=" AutoRun" IsChecked="True"
