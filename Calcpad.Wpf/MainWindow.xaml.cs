@@ -247,6 +247,7 @@ namespace Calcpad.Wpf
             _isTextChangedEnabled = false;
             IsSaved = true;
             _findReplace.RichTextBox = RichTextBox;
+            _findReplace.Avalon = CodeEditorAvalon;
             _findReplace.WebViewer = WebViewer;
             _findReplace.BeginSearch += FindReplace_BeginSearch;
             _findReplace.EndSearch += FindReplace_EndSearch;

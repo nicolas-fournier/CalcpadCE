@@ -34,7 +34,8 @@ namespace Calcpad.Wpf
         internal Modes Mode;
         internal string SearchString { get; set; }
         internal string ReplaceString { get; set; }
-        internal string SelectedText => RichTextBox.Selection.Text;
+        internal ICSharpCode.AvalonEdit.TextEditor Avalon { get; set; }
+        internal string SelectedText => Avalon is not null ? Avalon.SelectedText : RichTextBox.Selection.Text;
         public Directions Direction
         {
             get => _direction;
@@ -97,6 +98,11 @@ namespace Calcpad.Wpf
         internal void Replace() => FindNext(true);
         internal void ReplaceAll()
         {
+            if (Avalon is not null && !IsWebView2Focused)
+            {
+                AvalonReplaceAll();
+                return;
+            }
             int count = 0;
             if (!InitSearch(true))
                 return;
@@ -165,6 +171,12 @@ namespace Calcpad.Wpf
                 if (!isFound)
                     MessageBox.Show(FindReplaceResources.Search_text_not_found, FindReplaceResources.Find_And_Replace_Caption);
 
+                return;
+            }
+
+            if (Avalon is not null)
+            {
+                AvalonFindNext(replace);
                 return;
             }
 
@@ -276,6 +288,124 @@ namespace Calcpad.Wpf
                         0;
                 }
             }
+        }
+
+        // ---- AvalonEdit find/replace (operates on the TextEditor) ----
+
+        private void AvalonFindNext(bool replace)
+        {
+            if (!InitSearch(replace))
+                return;
+
+            var ed = Avalon;
+            var cmp = MatchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+            var len = SearchString.Length;
+            var text = ed.Text;
+
+            // Replace the current match first (Replace = replace-then-find-next).
+            if (replace && ed.SelectionLength == len &&
+                string.Equals(ed.SelectedText, SearchString, cmp))
+            {
+                ed.Document.Replace(ed.SelectionStart, len, ReplaceString ?? string.Empty);
+                text = ed.Text;
+            }
+
+            int found;
+            if (Direction == Directions.Up)
+            {
+                var from = (ed.SelectionLength > 0 ? ed.SelectionStart : ed.CaretOffset) - 1;
+                found = FindBackward(text, from, cmp, len);
+                if (found < 0 && Direction == Directions.All)
+                    found = FindBackward(text, text.Length, cmp, len);
+            }
+            else
+            {
+                var from = ed.SelectionLength > 0 ? ed.SelectionStart + 1 : ed.CaretOffset;
+                found = FindForward(text, from, cmp, len);
+                if (found < 0 && Direction == Directions.All)
+                    found = FindForward(text, 0, cmp, len);
+            }
+
+            if (found < 0)
+            {
+                MessageBox.Show(FindReplaceResources.Search_text_not_found, FindReplaceResources.Find_And_Replace_Caption);
+                return;
+            }
+            ed.Select(found, len);
+            ed.ScrollTo(ed.Document.GetLineByOffset(found).LineNumber, 0);
+            ed.TextArea.Caret.BringCaretToView();
+        }
+
+        private void AvalonReplaceAll()
+        {
+            if (!InitSearch(true))
+                return;
+
+            var ed = Avalon;
+            var cmp = MatchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+            var len = SearchString.Length;
+            var text = ed.Text;
+            var sb = new StringBuilder(text.Length + 64);
+            int i = 0, count = 0;
+            while (true)
+            {
+                var j = text.IndexOf(SearchString, i, cmp);
+                if (j < 0)
+                {
+                    sb.Append(text, i, text.Length - i);
+                    break;
+                }
+                sb.Append(text, i, j - i);
+                if (IsWholeWord(text, j, j + len))
+                {
+                    sb.Append(ReplaceString ?? string.Empty);
+                    ++count;
+                }
+                else
+                    sb.Append(SearchString);
+                i = j + len;
+            }
+            if (count > 0)
+                ed.Document.Text = sb.ToString(); // AvalonEdit re-highlights and recalculates on change
+            MessageBox.Show(string.Format(FindReplaceResources.count_matches_were_replaced, count), FindReplaceResources.Find_And_Replace_Caption);
+        }
+
+        private int FindForward(string text, int from, StringComparison cmp, int len)
+        {
+            if (len == 0 || text.Length < len)
+                return -1;
+            if (from < 0)
+                from = 0;
+            while (from <= text.Length - len)
+            {
+                var j = text.IndexOf(SearchString, from, cmp);
+                if (j < 0)
+                    return -1;
+                if (IsWholeWord(text, j, j + len))
+                    return j;
+                from = j + 1;
+            }
+            return -1;
+        }
+
+        private int FindBackward(string text, int from, StringComparison cmp, int len)
+        {
+            if (len == 0 || text.Length < len)
+                return -1;
+            if (from < 0)
+                return -1;
+            if (from > text.Length - 1)
+                from = text.Length - 1;
+            while (from >= 0)
+            {
+                var j = text.LastIndexOf(SearchString, from, cmp);
+                if (j < 0)
+                    return -1;
+                if (IsWholeWord(text, j, j + len))
+                    return j;
+                from = j - 1;
+            }
+            return -1;
         }
 
         private bool InitSearch(bool replace)
