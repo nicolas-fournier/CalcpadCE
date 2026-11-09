@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SyntaxDefinition name="Calcpad" extensions=".cpd" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Comment"  foreground="#5A6678" />
+  <Color name="Title"    foreground="#1B2330" fontWeight="bold" />
+  <Color name="Keyword"  foreground="#B2379B" fontWeight="bold" />
+  <Color name="Number"   foreground="#C2410C" />
+  <Color name="Function" foreground="#1F7FAE" />
+  <Color name="MathCode" foreground="#0C8F73" />
+
+  <RuleSet ignoreCase="true">
+    <!-- single-quoted text comment -->
+    <Span color="Comment">
+      <Begin>'</Begin>
+      <End>'</End>
+    </Span>
+    <!-- double-quoted title -->
+    <Span color="Title">
+      <Begin>"</Begin>
+      <End>"</End>
+    </Span>
+    <!-- inline math / code `expr` -->
+    <Span color="MathCode">
+      <Begin>`</Begin>
+      <End>`</End>
+    </Span>
+
+    <!-- directives / keywords -->
+    <Rule color="Keyword">
+      \#(md\s+full|md\s+on|md\s+off|md|else\s+if|end\s+if|end\s+def|if|else|rad|deg|gra|val|equ|noc|round|format|show|hide|nosub|novar|varsub|const|split|wrap|pre|post|repeat|for|while|loop|break|continue|include|local|global|def|pause|input|read|write|append|phasor|complex)\b
+    </Rule>
+
+    <Keywords color="Function">
+      <Word>sin</Word><Word>cos</Word><Word>tan</Word><Word>asin</Word><Word>acos</Word><Word>atan</Word>
+      <Word>sqrt</Word><Word>cbrt</Word><Word>abs</Word><Word>sign</Word><Word>mod</Word>
+      <Word>ln</Word><Word>log</Word><Word>exp</Word><Word>min</Word><Word>max</Word>
+      <Word>sum</Word><Word>product</Word><Word>average</Word><Word>mean</Word>
+      <Word>round</Word><Word>floor</Word><Word>ceiling</Word><Word>trunc</Word>
+      <Word>root</Word><Word>sqr</Word><Word>re</Word><Word>im</Word><Word>phase</Word>
+    </Keywords>
+
+    <Rule color="Number">
+      \b[0-9]+(\.[0-9]+)?([eE][+\-]?[0-9]+)?\b
+    </Rule>
+  </RuleSet>
+</SyntaxDefinition>

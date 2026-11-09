@@ -30,8 +30,17 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Share the single snippet catalogue with the WPF app / AI assistant (no Anthropic dep). -->
+    <Compile Include="..\Calcpad.AI\CalcpadSnippets.cs" Link="Shared\CalcpadSnippets.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Worksheet HTML head/CSS reused from the CLI preview, for a faithful render. -->
     <Content Include="..\Calcpad.Cli\doc\template.html" Link="Assets\template.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- Syntax highlighting reused from the WPF editor (AvalonEdit xshd 2008 schema). -->
+    <Content Include="Assets\Calcpad.xshd">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

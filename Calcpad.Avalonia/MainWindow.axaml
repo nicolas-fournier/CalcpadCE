@@ -3,19 +3,38 @@
         xmlns:aedit="clr-namespace:AvaloniaEdit;assembly=AvaloniaEdit"
         xmlns:webview="clr-namespace:WebViewControl;assembly=WebViewControl.Avalonia"
         x:Class="Calcpad.Avalonia.MainWindow"
-        Width="1100" Height="720"
+        Width="1180" Height="780"
         Title="CalcpadCE (Avalonia preview)">
 
   <DockPanel>
+    <!-- Menu -->
+    <Menu DockPanel.Dock="Top">
+      <MenuItem Header="_File">
+        <MenuItem Header="_New" Click="New_Click"/>
+        <MenuItem Header="_Open…" Click="Open_Click"/>
+        <Separator/>
+        <MenuItem Header="_Save" Click="Save_Click"/>
+        <MenuItem Header="Save _As…" Click="SaveAs_Click"/>
+      </MenuItem>
+      <MenuItem x:Name="SnippetsMenu" Header="_Snippets"/>
+      <MenuItem Header="_View">
+        <MenuItem Header="Toggle _keypad" Click="ToggleKeypad_Click"/>
+      </MenuItem>
+    </Menu>
+
     <!-- Toolbar -->
     <Border DockPanel.Dock="Top" Background="#F3F4F6" BorderBrush="#E2E4E8" BorderThickness="0,0,0,1" Padding="8,6">
       <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
         <TextBlock Text="CalcpadCE · Avalonia" FontWeight="SemiBold" VerticalAlignment="Center"/>
-        <Button x:Name="OpenBrowserButton" Content="Open preview in browser" Click="OpenInBrowser_Click"/>
-        <Button x:Name="RunButton" Content="Run (F5)" Click="Run_Click"/>
+        <Button Content="Run (F5)" Click="Run_Click"/>
+        <Button Content="Open preview in browser" Click="OpenInBrowser_Click"/>
         <TextBlock x:Name="StatusText" VerticalAlignment="Center" Foreground="#4B5563"/>
       </StackPanel>
     </Border>
+
+    <!-- Keypad (collapsible) -->
+    <Border x:Name="KeypadHost" DockPanel.Dock="Bottom" Background="#FAFAFB"
+            BorderBrush="#E2E4E8" BorderThickness="0,1,0,0" Padding="8,6"/>
 
     <!-- Editor | Preview split -->
     <Grid ColumnDefinitions="*,4,*">
