@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="../Calcpad.Core/Calcpad.Core.csproj" />
+  <Project Path="../Calcpad.OpenXml/Calcpad.OpenXml.csproj" />
+  <Project Path="Calcpad.Avalonia.csproj" />
+</Solution>

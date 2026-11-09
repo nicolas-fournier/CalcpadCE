@@ -1,0 +1,47 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:aedit="clr-namespace:AvaloniaEdit;assembly=AvaloniaEdit"
+        x:Class="Calcpad.Avalonia.MainWindow"
+        Width="1100" Height="720"
+        Title="CalcpadCE (Avalonia preview)">
+
+  <DockPanel>
+    <!-- Toolbar -->
+    <Border DockPanel.Dock="Top" Background="#F3F4F6" BorderBrush="#E2E4E8" BorderThickness="0,0,0,1" Padding="8,6">
+      <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+        <TextBlock Text="CalcpadCE · Avalonia" FontWeight="SemiBold" VerticalAlignment="Center"/>
+        <Button x:Name="OpenBrowserButton" Content="Open preview in browser" Click="OpenInBrowser_Click"/>
+        <Button x:Name="RunButton" Content="Run (F5)" Click="Run_Click"/>
+        <TextBlock x:Name="StatusText" VerticalAlignment="Center" Foreground="#4B5563"/>
+      </StackPanel>
+    </Border>
+
+    <!-- Editor | Preview split -->
+    <Grid ColumnDefinitions="*,4,*">
+      <Border Grid.Column="0" BorderBrush="#E2E4E8" BorderThickness="0,0,1,0">
+        <aedit:TextEditor x:Name="Editor"
+                          FontFamily="Cascadia Code,Consolas,Menlo,monospace"
+                          FontSize="13"
+                          ShowLineNumbers="True"
+                          HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Auto"/>
+      </Border>
+
+      <GridSplitter Grid.Column="1" Background="#E2E4E8" ResizeDirection="Columns"/>
+
+      <Border Grid.Column="2" Background="White">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Text="HTML output (live)" Margin="8,6"
+                     Foreground="#6B7280" FontSize="12"/>
+          <TextBox x:Name="Preview"
+                   IsReadOnly="True"
+                   AcceptsReturn="True"
+                   TextWrapping="Wrap"
+                   FontFamily="Cascadia Code,Consolas,Menlo,monospace"
+                   FontSize="12"
+                   BorderThickness="0"/>
+        </DockPanel>
+      </Border>
+    </Grid>
+  </DockPanel>
+</Window>
