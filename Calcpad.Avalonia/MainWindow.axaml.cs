@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Xml;
 using Avalonia.Controls;
@@ -38,6 +39,9 @@ namespace Calcpad.Avalonia
         private readonly TextBlock _status;
         private readonly MenuItem _snippetsMenu;
         private readonly Border _keypadHost;
+        private readonly Border _formatBar;
+        private readonly Border _filePanel;
+        private readonly TreeView _fileTree;
         private readonly DispatcherTimer _debounce;
         private readonly string _template;   // worksheet HTML head + CSS
         private string _lastHtml = string.Empty;
@@ -56,10 +60,14 @@ namespace Calcpad.Avalonia
             _status = this.FindControl<TextBlock>("StatusText")!;
             _snippetsMenu = this.FindControl<MenuItem>("SnippetsMenu")!;
             _keypadHost = this.FindControl<Border>("KeypadHost")!;
+            _formatBar = this.FindControl<Border>("FormatBar")!;
+            _filePanel = this.FindControl<Border>("FilePanel")!;
+            _fileTree = this.FindControl<TreeView>("FileTree")!;
 
             _template = LoadTemplate();
             LoadHighlighting();
             BuildKeypad();
+            BuildFormatBar();
 
             _debounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
             _debounce.Tick += (_, _) => { _debounce.Stop(); Render(); };
@@ -131,11 +139,25 @@ namespace Calcpad.Avalonia
             _debounce.Start();
         }
 
-        // Inserts text at the caret; a '‸' marks where the caret should land afterwards.
+        // Inserts text at the caret. A '‸' marks where the caret should land; any selected text
+        // is placed at that marker (so e.g. "**‸**" wraps the selection in bold).
         private void InsertAtCaret(string text)
         {
             var mark = text.IndexOf('‸');
-            var clean = mark >= 0 ? text.Remove(mark, 1) : text;
+            var selected = _editor.SelectedText ?? string.Empty;
+
+            string clean;
+            int caretRel;
+            if (mark >= 0)
+            {
+                clean = text.Substring(0, mark) + selected + text.Substring(mark + 1);
+                caretRel = mark + selected.Length;
+            }
+            else
+            {
+                clean = text;
+                caretRel = text.Length;
+            }
 
             int start;
             if (_editor.SelectionLength > 0)
@@ -148,7 +170,7 @@ namespace Calcpad.Avalonia
                 start = _editor.CaretOffset;
                 _editor.Document.Insert(start, clean);
             }
-            _editor.CaretOffset = start + (mark >= 0 ? mark : clean.Length);
+            _editor.CaretOffset = start + caretRel;
             _editor.Focus();
             ScheduleRender();
         }
@@ -223,6 +245,102 @@ namespace Calcpad.Avalonia
         private void ToggleKeypad_Click(object? sender, RoutedEventArgs e)
             => _keypadHost.IsVisible = !_keypadHost.IsVisible;
 
+        private void ToggleFiles_Click(object? sender, RoutedEventArgs e)
+            => _filePanel.IsVisible = !_filePanel.IsVisible;
+
+        // ---- File browser ----
+
+        private async void OpenFolder_Click(object? sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+                {
+                    Title = "Open a folder of Calcpad worksheets",
+                    AllowMultiple = false
+                });
+                if (folders.Count == 0) return;
+                var dir = folders[0].Path.LocalPath;
+                _fileTree.ItemsSource = null;
+                _fileTree.Items.Clear();
+                var root = BuildFileNode(new DirectoryInfo(dir));
+                if (root is not null)
+                {
+                    root.IsExpanded = true;
+                    _fileTree.Items.Add(root);
+                }
+            }
+            catch (Exception ex) { _status.Text = "Folder failed: " + ex.Message; }
+        }
+
+        // Builds a TreeViewItem for a directory: sub-folders first, then *.cpd files.
+        private static TreeViewItem? BuildFileNode(DirectoryInfo dir)
+        {
+            TreeViewItem node;
+            try
+            {
+                node = new TreeViewItem { Header = dir.Name };
+                foreach (var sub in dir.GetDirectories().OrderBy(d => d.Name))
+                {
+                    if ((sub.Attributes & FileAttributes.Hidden) != 0) continue;
+                    var child = BuildFileNode(sub);
+                    if (child is not null) node.Items.Add(child);
+                }
+                foreach (var file in dir.GetFiles("*.cpd").OrderBy(f => f.Name))
+                    node.Items.Add(new TreeViewItem { Header = file.Name, Tag = file.FullName });
+            }
+            catch { return null; } // unreadable folders are skipped
+            return node;
+        }
+
+        private async void FileTree_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+        {
+            if (_fileTree.SelectedItem is not TreeViewItem item || item.Tag is not string path) return;
+            try
+            {
+                _currentFile = path;
+                _editor.Text = (await File.ReadAllTextAsync(path)).Replace("\r\n", "\n").Replace("\r", "\n");
+                _dirty = false;
+                UpdateTitle();
+                RefreshSnippetsMenuIfModeChanged();
+                Render();
+            }
+            catch (Exception ex) { _status.Text = "Open failed: " + ex.Message; }
+        }
+
+        // ---- Formatting toolbar (markdown-aware) ----
+
+        private void BuildFormatBar()
+        {
+            var bar = new WrapPanel { Orientation = Orientation.Horizontal };
+
+            void Add(string label, string md, string classic, string? tip = null)
+            {
+                var b = MakeButton(label, () => InsertAtCaret(CurrentMarkdownFull() ? md : classic));
+                b.MinWidth = 32;
+                if (tip is not null) ToolTip.SetTip(b, tip);
+                bar.Children.Add(b);
+            }
+
+            Add("H1", "# ‸", "<h1>‸</h1>", "Heading 1");
+            Add("H2", "## ‸", "<h2>‸</h2>", "Heading 2");
+            Add("H3", "### ‸", "<h3>‸</h3>", "Heading 3");
+            bar.Children.Add(new Border { Width = 10 });
+            Add("B", "**‸**", "<strong>‸</strong>", "Bold");
+            Add("I", "*‸*", "<em>‸</em>", "Italic");
+            Add("S", "~~‸~~", "<del>‸</del>", "Strikethrough");
+            bar.Children.Add(new Border { Width = 10 });
+            Add("• List", "- ‸", "<ul><li>‸</li></ul>", "Bullet list");
+            Add("Table", "| A | B |\n| --- | --- |\n| ‸ |  |", "<table><tr><td>‸</td></tr></table>", "Table");
+            Add("❝ Quote", "> ‸", "<blockquote>‸</blockquote>", "Quote");
+            bar.Children.Add(new Border { Width = 10 });
+            Add("$x$", "$‸$", "‸", "Inline math");
+            Add("$$", "$$ ‸ $$", "‸", "Block math");
+            Add("Rule", "\n---\n", "<hr/>", "Horizontal rule");
+
+            _formatBar.Child = bar;
+        }
+
         // ---- Snippets (mode-aware) ----
 
         private void PopulateSnippetsMenu()
@@ -269,6 +387,22 @@ namespace Calcpad.Avalonia
         // ---- Rendering ----
 
         private void Run_Click(object? sender, RoutedEventArgs e) => Render();
+
+        // Loads the quick-reference help page into the preview pane.
+        private void ShowHelp_Click(object? sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var path = Path.Combine(AppContext.BaseDirectory, "Assets", "help.html");
+                if (File.Exists(path))
+                {
+                    _webView.LoadHtml(File.ReadAllText(path));
+                    _status.Text = "Quick reference — View ▸ Show preview to return";
+                }
+                else _status.Text = "Help page not found";
+            }
+            catch (Exception ex) { _status.Text = "Help failed: " + ex.Message; }
+        }
 
         private void Render()
         {

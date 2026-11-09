@@ -46,6 +46,10 @@
     <Content Include="Assets\Calcpad.xshd">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!-- Quick-reference help page reused from the WPF app. -->
+    <Content Include="..\Calcpad.Wpf\doc\help.html" Link="Assets\help.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>
