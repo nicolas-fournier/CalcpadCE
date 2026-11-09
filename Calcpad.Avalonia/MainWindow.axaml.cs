@@ -17,6 +17,7 @@ using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using AvaloniaEdit;
+using AvaloniaEdit.Document;
 using AvaloniaEdit.Highlighting;
 using AvaloniaEdit.Highlighting.Xshd;
 using Calcpad.AI;
@@ -39,6 +40,10 @@ namespace Calcpad.Avalonia
             "M := q*L^2/8 | kN*m\n";
 
         private readonly TextEditor _editor;
+        private readonly StackPanel _tabStrip;
+        private readonly List<OpenDoc> _docs = new();
+        private OpenDoc? _active;
+        private bool _switching;
         private readonly WebView _webView;
         private readonly TextBlock _status;
         private readonly MenuItem _snippetsMenu;
@@ -69,7 +74,7 @@ namespace Calcpad.Avalonia
         private bool _dirty;
         private bool _snippetsMenuMarkdown;
         private int _decimals = 6;
-        private string? _selectedFilePath;
+        private object? _selectedTag; // selected file path (string) or FunctionRef
         // Values entered into #input fields in the preview, applied on the next render.
         private readonly List<(int line, string value)> _inputValues = new();
 
@@ -88,6 +93,7 @@ namespace Calcpad.Avalonia
             AvaloniaXamlLoader.Load(this);
 
             _editor = this.FindControl<TextEditor>("Editor")!;
+            _tabStrip = this.FindControl<StackPanel>("TabStrip")!;
             _webView = this.FindControl<WebView>("WebView")!;
             _status = this.FindControl<TextBlock>("StatusText")!;
             _snippetsMenu = this.FindControl<MenuItem>("SnippetsMenu")!;
@@ -112,27 +118,27 @@ namespace Calcpad.Avalonia
             _debounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
             _debounce.Tick += (_, _) => { _debounce.Stop(); Render(); };
 
-            _editor.Text = SampleSource;
             _editor.TextChanged += (_, _) =>
             {
-                if (!_ready) return;
+                if (!_ready || _switching) return;
                 _dirty = true;
+                if (_active is not null) _active.Dirty = true;
                 _inputValues.Clear(); // edits invalidate the #input line mapping
                 UpdateTitle();
+                UpdateTabLabels();
                 RefreshSnippetsMenuIfModeChanged();
                 ScheduleRender();
             };
             KeyDown += OnKeyDown;
 
             PopulateSnippetsMenu();
-            UpdateTitle();
 
             // The embedded Chromium browser initializes asynchronously; first render once shown.
             Loaded += (_, _) => { _ready = true; RestoreLastFolder(); LoadStartupFileOrSample(); };
         }
 
-        // Opens a .cpd passed on the command line (file association / "open with"), else keeps
-        // the sample already in the editor.
+        // Opens a .cpd passed on the command line (file association / "open with") in the first
+        // tab, else starts with the sample worksheet.
         private void LoadStartupFileOrSample()
         {
             try
@@ -140,15 +146,99 @@ namespace Calcpad.Avalonia
                 var args = Environment.GetCommandLineArgs();
                 if (args.Length > 1 && File.Exists(args[1]))
                 {
-                    _currentFile = args[1];
-                    _editor.Text = File.ReadAllText(_currentFile).Replace("\r\n", "\n").Replace("\r", "\n");
-                    _dirty = false;
-                    UpdateTitle();
-                    RefreshSnippetsMenuIfModeChanged();
+                    OpenOrActivate(args[1], File.ReadAllText(args[1]).Replace("\r\n", "\n").Replace("\r", "\n"));
+                    return;
                 }
             }
             catch { /* fall back to the sample */ }
-            Render();
+            AddTab(null, SampleSource);
+        }
+
+        // ---- Tabs (one TextDocument per open file) ----
+
+        private sealed class OpenDoc
+        {
+            public string? Path;
+            public TextDocument Doc = new();
+            public bool Dirty;
+            public string Title => Path is null ? "untitled" : System.IO.Path.GetFileName(Path);
+        }
+
+        // Opens the path in an existing tab if already open, otherwise a new tab.
+        private void OpenOrActivate(string path, string text)
+        {
+            var existing = _docs.FirstOrDefault(d => string.Equals(d.Path, path, StringComparison.OrdinalIgnoreCase));
+            if (existing is not null) { ActivateDoc(existing); return; }
+            AddTab(path, text);
+        }
+
+        private void AddTab(string? path, string text)
+        {
+            var doc = new OpenDoc { Path = path, Doc = new TextDocument(text), Dirty = false };
+            _docs.Add(doc);
+            ActivateDoc(doc);
+        }
+
+        private void ActivateDoc(OpenDoc doc)
+        {
+            _switching = true;
+            _active = doc;
+            _editor.Document = doc.Doc;
+            _currentFile = doc.Path;
+            _dirty = doc.Dirty;
+            _inputValues.Clear();
+            _switching = false;
+
+            RebuildTabs();
+            UpdateTitle();
+            RefreshSnippetsMenuIfModeChanged();
+            if (_ready) Render();
+        }
+
+        private void CloseDoc(OpenDoc doc)
+        {
+            var idx = _docs.IndexOf(doc);
+            if (idx < 0) return;
+            _docs.Remove(doc);
+            if (_docs.Count == 0) { AddTab(null, SampleSource); return; }
+            if (_active == doc)
+                ActivateDoc(_docs[Math.Min(idx, _docs.Count - 1)]);
+            else
+                RebuildTabs();
+        }
+
+        private void RebuildTabs()
+        {
+            _tabStrip.Children.Clear();
+            foreach (var doc in _docs)
+            {
+                var active = doc == _active;
+                var label = new TextBlock { Text = doc.Title + (doc.Dirty ? " *" : string.Empty), VerticalAlignment = VerticalAlignment.Center };
+                var close = new Button { Content = "✕", Padding = new global::Avalonia.Thickness(4, 0), Background = global::Avalonia.Media.Brushes.Transparent, FontSize = 10, Margin = new global::Avalonia.Thickness(4, 0, 0, 0) };
+                close.Click += (_, _) => CloseDoc(doc);
+                var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
+                row.Children.Add(label);
+                row.Children.Add(close);
+                var tab = new Border
+                {
+                    Child = row,
+                    Padding = new global::Avalonia.Thickness(10, 4),
+                    Margin = new global::Avalonia.Thickness(2, 3, 0, 0),
+                    Background = active ? global::Avalonia.Media.Brushes.White : new SolidColorBrush(Color.Parse("#E5E7EB")),
+                    BorderBrush = new SolidColorBrush(Color.Parse("#D1D5DB")),
+                    BorderThickness = new global::Avalonia.Thickness(1, 1, 1, active ? 0 : 1),
+                    Cursor = new global::Avalonia.Input.Cursor(global::Avalonia.Input.StandardCursorType.Hand)
+                };
+                var captured = doc;
+                tab.PointerPressed += (_, _) => ActivateDoc(captured);
+                _tabStrip.Children.Add(tab);
+            }
+        }
+
+        private void UpdateTabLabels()
+        {
+            // Cheap: only the active tab's dirty marker changes on a keystroke.
+            RebuildTabs();
         }
 
         private void OnKeyDown(object? sender, KeyEventArgs e)
@@ -591,7 +681,8 @@ namespace Calcpad.Avalonia
             public string? LastFolder { get; set; }
         }
 
-        // Builds a TreeViewItem for a directory: sub-folders first, then *.cpd files.
+        // Builds a TreeViewItem for a directory: sub-folders first, then *.cpd files, each file
+        // expandable into the functions it defines (insertable as a call + #include).
         private static TreeViewItem? BuildFileNode(DirectoryInfo dir)
         {
             TreeViewItem node;
@@ -605,38 +696,82 @@ namespace Calcpad.Avalonia
                     if (child is not null) node.Items.Add(child);
                 }
                 foreach (var file in dir.GetFiles("*.cpd").OrderBy(f => f.Name))
-                    node.Items.Add(new TreeViewItem { Header = file.Name, Tag = file.FullName });
+                {
+                    var fileNode = new TreeViewItem { Header = file.Name, Tag = file.FullName };
+                    foreach (var fn in ScanFunctions(file.FullName))
+                        fileNode.Items.Add(new TreeViewItem
+                        {
+                            Header = "ƒ " + fn.signature,
+                            Tag = new FunctionRef(file.FullName, fn.call)
+                        });
+                    node.Items.Add(fileNode);
+                }
             }
             catch { return null; } // unreadable folders are skipped
             return node;
         }
 
-        // Selecting a file only tracks it; double-click opens it, the Insert button includes it.
+        private sealed record FunctionRef(string FilePath, string Call);
+
+        private static readonly System.Text.RegularExpressions.Regex MacroDefRegex =
+            new(@"^\s*#def\s+([A-Za-z_][A-Za-z0-9_]*\$?)\s*(?:\(([^)]*)\))?", System.Text.RegularExpressions.RegexOptions.Compiled);
+        private static readonly System.Text.RegularExpressions.Regex MathFuncRegex =
+            new(@"^\s*([A-Za-z_][A-Za-z_0-9]*)\s*\(([^)]*)\)\s*=", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        // Scans a .cpd for #def macros and math function definitions (ported from the WPF LibraryScanner).
+        private static IEnumerable<(string signature, string call)> ScanFunctions(string path)
+        {
+            string[] lines;
+            try { lines = File.ReadAllLines(path); } catch { yield break; }
+            foreach (var line in lines)
+            {
+                var m = MacroDefRegex.Match(line);
+                if (!m.Success) m = MathFuncRegex.Match(line);
+                if (!m.Success) continue;
+                var name = m.Groups[1].Value;
+                var pars = m.Groups.Count > 2 ? m.Groups[2].Value.Trim() : string.Empty;
+                var sig = string.IsNullOrEmpty(pars) ? name : $"{name}({pars})";
+                yield return (sig, sig);
+            }
+        }
+
+        // Selecting a node only tracks it; double-click opens a file (or inserts a function),
+        // the Insert button includes the file or inserts the selected function's call.
         private void FileTree_SelectionChanged(object? sender, SelectionChangedEventArgs e)
         {
-            _selectedFilePath = (_fileTree.SelectedItem as TreeViewItem)?.Tag as string;
+            _selectedTag = (_fileTree.SelectedItem as TreeViewItem)?.Tag;
         }
 
         private async void OpenSelectedFile()
         {
-            if (_selectedFilePath is not string path) return;
+            if (_selectedTag is FunctionRef fr) { InsertFunction(fr); return; }
+            if (_selectedTag is not string path) return;
             try
             {
-                _currentFile = path;
-                _editor.Text = (await File.ReadAllTextAsync(path)).Replace("\r\n", "\n").Replace("\r", "\n");
-                _dirty = false;
-                UpdateTitle();
-                RefreshSnippetsMenuIfModeChanged();
-                Render();
+                OpenOrActivate(path, (await File.ReadAllTextAsync(path)).Replace("\r\n", "\n").Replace("\r", "\n"));
             }
             catch (Exception ex) { _status.Text = "Open failed: " + ex.Message; }
         }
 
-        // Inserts an #include directive for the selected file at the caret (like the WPF library).
+        // Insert button: a function's call (+ #include of its file) or an #include for a file.
         private void InsertFile_Click(object? sender, RoutedEventArgs e)
         {
-            if (_selectedFilePath is not string path) { _status.Text = "Select a file first"; return; }
-            InsertAtCaret($"#include {path}\n");
+            switch (_selectedTag)
+            {
+                case FunctionRef fr: InsertFunction(fr); break;
+                case string path: InsertAtCaret($"#include {path}\n"); break;
+                default: _status.Text = "Select a file or function first"; break;
+            }
+        }
+
+        // Ensures the function's file is #included at the top, then inserts a call to it.
+        private void InsertFunction(FunctionRef fr)
+        {
+            var text = _editor.Text ?? string.Empty;
+            var include = $"#include {fr.FilePath}";
+            if (text.IndexOf(include, StringComparison.OrdinalIgnoreCase) < 0)
+                _editor.Document.Insert(0, include + "\n");
+            InsertAtCaret(fr.Call + "\n");
         }
 
         // ---- Options bar ----
@@ -931,13 +1066,9 @@ namespace Calcpad.Avalonia
 
         private void New_Click(object? sender, RoutedEventArgs e)
         {
-            _currentFile = null;
-            _editor.Text = NewDocument;
+            AddTab(null, NewDocument);
             _editor.CaretOffset = _editor.Document.TextLength;
-            _dirty = false;
-            UpdateTitle();
             PopulateSnippetsMenu();
-            Render();
         }
 
         private async void Open_Click(object? sender, RoutedEventArgs e)
@@ -955,12 +1086,8 @@ namespace Calcpad.Avalonia
                     }
                 });
                 if (files.Count == 0) return;
-                _currentFile = files[0].Path.LocalPath;
-                _editor.Text = (await File.ReadAllTextAsync(_currentFile)).Replace("\r\n", "\n").Replace("\r", "\n");
-                _dirty = false;
-                UpdateTitle();
-                RefreshSnippetsMenuIfModeChanged();
-                Render();
+                var path = files[0].Path.LocalPath;
+                OpenOrActivate(path, (await File.ReadAllTextAsync(path)).Replace("\r\n", "\n").Replace("\r", "\n"));
             }
             catch (Exception ex) { _status.Text = "Open failed: " + ex.Message; }
         }
@@ -985,8 +1112,7 @@ namespace Calcpad.Avalonia
                     FileTypeChoices = new[] { new FilePickerFileType("Calcpad") { Patterns = new[] { "*.cpd" } } }
                 });
                 if (file is null) return;
-                _currentFile = file.Path.LocalPath;
-                await SaveTo(_currentFile);
+                await SaveTo(file.Path.LocalPath);
             }
             catch (Exception ex) { _status.Text = "Save failed: " + ex.Message; }
         }
@@ -994,7 +1120,10 @@ namespace Calcpad.Avalonia
         private async System.Threading.Tasks.Task SaveTo(string path)
         {
             await File.WriteAllTextAsync(path, _editor.Text ?? string.Empty);
+            _currentFile = path;
             _dirty = false;
+            if (_active is not null) { _active.Path = path; _active.Dirty = false; }
+            RebuildTabs();
             UpdateTitle();
             _status.Text = "Saved " + Path.GetFileName(path);
         }

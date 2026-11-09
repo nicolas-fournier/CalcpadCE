@@ -82,12 +82,18 @@
     <!-- Editor | Preview split -->
     <Grid ColumnDefinitions="*,4,*">
       <Border Grid.Column="0" BorderBrush="#E2E4E8" BorderThickness="0,0,1,0">
-        <aedit:TextEditor x:Name="Editor"
-                          FontFamily="Cascadia Code,Consolas,Menlo,monospace"
-                          FontSize="13"
-                          ShowLineNumbers="True"
-                          HorizontalScrollBarVisibility="Auto"
-                          VerticalScrollBarVisibility="Auto"/>
+        <DockPanel>
+          <ScrollViewer DockPanel.Dock="Top" HorizontalScrollBarVisibility="Auto"
+                        VerticalScrollBarVisibility="Disabled" Background="#F3F4F6">
+            <StackPanel x:Name="TabStrip" Orientation="Horizontal" Height="30"/>
+          </ScrollViewer>
+          <aedit:TextEditor x:Name="Editor"
+                            FontFamily="Cascadia Code,Consolas,Menlo,monospace"
+                            FontSize="13"
+                            ShowLineNumbers="True"
+                            HorizontalScrollBarVisibility="Auto"
+                            VerticalScrollBarVisibility="Auto"/>
+        </DockPanel>
       </Border>
 
       <GridSplitter Grid.Column="1" Background="#E2E4E8" ResizeDirection="Columns"/>
