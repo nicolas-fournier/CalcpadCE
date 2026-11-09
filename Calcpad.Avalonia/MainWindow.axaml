@@ -38,6 +38,8 @@
       <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
         <TextBlock Text="CalcpadCE · Avalonia" FontWeight="SemiBold" VerticalAlignment="Center"/>
         <Button Content="Run (F5)" Click="Run_Click"/>
+        <Button Content="↻ Inputs" Click="RecalcInputs_Click"
+                ToolTip.Tip="Read the #input field values from the preview and recalculate"/>
         <Button Content="Open preview in browser" Click="OpenInBrowser_Click"/>
         <TextBlock Text="Decimals" VerticalAlignment="Center" Foreground="#4B5563"/>
         <NumericUpDown x:Name="Decimals" Minimum="0" Maximum="15" Increment="1" Value="6"

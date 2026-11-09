@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Xml;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -52,6 +54,8 @@ namespace Calcpad.Avalonia
         private bool _snippetsMenuMarkdown;
         private int _decimals = 6;
         private string? _selectedFilePath;
+        // Values entered into #input fields in the preview, applied on the next render.
+        private readonly List<(int line, string value)> _inputValues = new();
 
         // Options-bar state (mapped onto Settings in BuildSettings).
         private bool _substitute = true;
@@ -91,6 +95,7 @@ namespace Calcpad.Avalonia
             {
                 if (!_ready) return;
                 _dirty = true;
+                _inputValues.Clear(); // edits invalidate the #input line mapping
                 UpdateTitle();
                 RefreshSnippetsMenuIfModeChanged();
                 ScheduleRender();
@@ -101,7 +106,27 @@ namespace Calcpad.Avalonia
             UpdateTitle();
 
             // The embedded Chromium browser initializes asynchronously; first render once shown.
-            Loaded += (_, _) => { _ready = true; Render(); };
+            Loaded += (_, _) => { _ready = true; LoadStartupFileOrSample(); };
+        }
+
+        // Opens a .cpd passed on the command line (file association / "open with"), else keeps
+        // the sample already in the editor.
+        private void LoadStartupFileOrSample()
+        {
+            try
+            {
+                var args = Environment.GetCommandLineArgs();
+                if (args.Length > 1 && File.Exists(args[1]))
+                {
+                    _currentFile = args[1];
+                    _editor.Text = File.ReadAllText(_currentFile).Replace("\r\n", "\n").Replace("\r", "\n");
+                    _dirty = false;
+                    UpdateTitle();
+                    RefreshSnippetsMenuIfModeChanged();
+                }
+            }
+            catch { /* fall back to the sample */ }
+            Render();
         }
 
         private void OnKeyDown(object? sender, KeyEventArgs e)
@@ -442,7 +467,7 @@ namespace Calcpad.Avalonia
         private bool CurrentMarkdownFull()
         {
             var text = _editor?.Text;
-            if (string.IsNullOrEmpty(text)) return true;
+            if (string.IsNullOrEmpty(text)) return false;
             var lines = text.Split('\n');
             for (var i = lines.Length - 1; i >= 0; i--)
             {
@@ -456,7 +481,7 @@ namespace Calcpad.Avalonia
                         || arg.Equals("off", StringComparison.OrdinalIgnoreCase)) return false;
                 }
             }
-            return true;
+            return false; // no #md directive → classic nomenclature
         }
 
         // ---- Rendering ----
@@ -500,14 +525,74 @@ namespace Calcpad.Avalonia
             var macro = new MacroParser { Include = static (_, _) => string.Empty };
             macro.Parse(source, out var unwrapped, null, 0, false);
 
+            var code = unwrapped ?? source;
+            if (_inputValues.Count > 0)
+                code = ApplyInputValues(code, _inputValues);
+
             var parser = new ExpressionParser { Settings = BuildSettings() };
-            parser.Parse(unwrapped ?? source, true, false);
+            parser.Parse(code, true, false);
             return parser.HtmlResult ?? string.Empty;
+        }
+
+        // Injects interactive #input values back into the source by line (ported from the CLI
+        // PreviewServer), so the parser recalculates with the entered numbers.
+        private static string ApplyInputValues(string source, List<(int line, string value)> inputs)
+        {
+            var byLine = new Dictionary<int, Queue<string>>();
+            foreach (var (line, value) in inputs)
+            {
+                if (line <= 0) continue;
+                if (!byLine.TryGetValue(line, out var queue))
+                    byLine[line] = queue = new Queue<string>();
+                queue.Enqueue((value ?? string.Empty).Trim());
+            }
+            if (byLine.Count == 0) return source;
+
+            var lines = source.Replace("\r\n", "\n").Split('\n');
+            var sb = new StringBuilder();
+            for (var i = 0; i < lines.Length; ++i)
+            {
+                if (byLine.TryGetValue(i + 1, out var queue) && queue.Count != 0)
+                {
+                    sb.Clear();
+                    if (MacroParser.SetLineInputFields(lines[i].TrimEnd(), sb, queue, true))
+                        lines[i] = sb.ToString();
+                }
+            }
+            return string.Join('\n', lines);
+        }
+
+        // Reads the #input field values from the preview DOM and recalculates with them.
+        private async void RecalcInputs_Click(object? sender, RoutedEventArgs e)
+        {
+            try
+            {
+                const string js =
+                    "JSON.stringify(Array.prototype.slice.call(document.getElementsByTagName('input'))" +
+                    ".filter(function(el){return /(^|\\s)input-\\d+/.test(el.className);})" +
+                    ".map(function(el){var m=el.className.match(/input-(\\d+)/);" +
+                    "return {line: parseInt(m[1],10), value: el.value};}))";
+                var json = await _webView.EvaluateScript<string>(js);
+                _inputValues.Clear();
+                if (!string.IsNullOrWhiteSpace(json))
+                {
+                    using var doc = JsonDocument.Parse(json);
+                    foreach (var el in doc.RootElement.EnumerateArray())
+                        _inputValues.Add((el.GetProperty("line").GetInt32(),
+                                          el.GetProperty("value").GetString() ?? string.Empty));
+                }
+                if (_inputValues.Count == 0) { _status.Text = "No #input fields in the preview"; return; }
+                Render();
+                _status.Text = $"Recalculated with {_inputValues.Count} input value(s)";
+            }
+            catch (Exception ex) { _status.Text = "Inputs failed: " + ex.Message; }
         }
 
         private Settings BuildSettings()
         {
-            var settings = new Settings { Units = _units, Markdown = MarkdownMode.Full };
+            // Seed Off (the engine default); a #md on|full directive in the source switches it on.
+            // Forcing Full would make classic worksheets (no directive) render as prose.
+            var settings = new Settings { Units = _units, Markdown = MarkdownMode.Off };
             settings.Math.Decimals = _decimals;
             settings.Math.Substitute = _substitute;
             settings.Math.FormatEquations = _formatEquations;
