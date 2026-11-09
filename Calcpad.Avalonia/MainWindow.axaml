@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:aedit="clr-namespace:AvaloniaEdit;assembly=AvaloniaEdit"
+        xmlns:webview="clr-namespace:WebViewControl;assembly=WebViewControl.Avalonia"
         x:Class="Calcpad.Avalonia.MainWindow"
         Width="1100" Height="720"
         Title="CalcpadCE (Avalonia preview)">
@@ -30,17 +31,7 @@
       <GridSplitter Grid.Column="1" Background="#E2E4E8" ResizeDirection="Columns"/>
 
       <Border Grid.Column="2" Background="White">
-        <DockPanel>
-          <TextBlock DockPanel.Dock="Top" Text="HTML output (live)" Margin="8,6"
-                     Foreground="#6B7280" FontSize="12"/>
-          <TextBox x:Name="Preview"
-                   IsReadOnly="True"
-                   AcceptsReturn="True"
-                   TextWrapping="Wrap"
-                   FontFamily="Cascadia Code,Consolas,Menlo,monospace"
-                   FontSize="12"
-                   BorderThickness="0"/>
-        </DockPanel>
+        <webview:WebView x:Name="WebView" Focusable="True"/>
       </Border>
     </Grid>
   </DockPanel>
