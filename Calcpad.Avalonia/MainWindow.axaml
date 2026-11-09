@@ -32,6 +32,9 @@
         <TextBlock Text="CalcpadCE · Avalonia" FontWeight="SemiBold" VerticalAlignment="Center"/>
         <Button Content="Run (F5)" Click="Run_Click"/>
         <Button Content="Open preview in browser" Click="OpenInBrowser_Click"/>
+        <TextBlock Text="Decimals" VerticalAlignment="Center" Foreground="#4B5563"/>
+        <NumericUpDown x:Name="Decimals" Minimum="0" Maximum="15" Increment="1" Value="6"
+                       Width="110" VerticalAlignment="Center" ValueChanged="Decimals_Changed"/>
         <TextBlock x:Name="StatusText" VerticalAlignment="Center" Foreground="#4B5563"/>
       </StackPanel>
     </Border>

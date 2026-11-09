@@ -43,7 +43,9 @@ namespace Calcpad.Avalonia
         private string _lastHtml = string.Empty;
         private string? _currentFile;
         private bool _ready;
+        private bool _dirty;
         private bool _snippetsMenuMarkdown;
+        private int _decimals = 6;
 
         public MainWindow()
         {
@@ -66,15 +68,47 @@ namespace Calcpad.Avalonia
             _editor.TextChanged += (_, _) =>
             {
                 if (!_ready) return;
+                _dirty = true;
+                UpdateTitle();
                 RefreshSnippetsMenuIfModeChanged();
                 ScheduleRender();
             };
-            KeyDown += (_, e) => { if (e.Key == Key.F5) Render(); };
+            KeyDown += OnKeyDown;
 
             PopulateSnippetsMenu();
+            UpdateTitle();
 
             // The embedded Chromium browser initializes asynchronously; first render once shown.
             Loaded += (_, _) => { _ready = true; Render(); };
+        }
+
+        private void OnKeyDown(object? sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.F5) { Render(); e.Handled = true; return; }
+            if (!e.KeyModifiers.HasFlag(KeyModifiers.Control)) return;
+            var args = new RoutedEventArgs();
+            switch (e.Key)
+            {
+                case Key.N: New_Click(this, args); e.Handled = true; break;
+                case Key.O: Open_Click(this, args); e.Handled = true; break;
+                case Key.S:
+                    if (e.KeyModifiers.HasFlag(KeyModifiers.Shift)) SaveAs_Click(this, args);
+                    else Save_Click(this, args);
+                    e.Handled = true;
+                    break;
+            }
+        }
+
+        private void Decimals_Changed(object? sender, NumericUpDownValueChangedEventArgs e)
+        {
+            _decimals = (int)(e.NewValue ?? 6m);
+            if (_ready) Render();
+        }
+
+        private void UpdateTitle()
+        {
+            var name = _currentFile is null ? "untitled" : Path.GetFileName(_currentFile);
+            Title = $"CalcpadCE (Avalonia) — {name}{(_dirty ? " *" : string.Empty)}";
         }
 
         // ---- Editor services ----
@@ -252,18 +286,22 @@ namespace Calcpad.Avalonia
             }
         }
 
-        private static string RenderHtml(string source)
+        private string RenderHtml(string source)
         {
             var macro = new MacroParser { Include = static (_, _) => string.Empty };
             macro.Parse(source, out var unwrapped, null, 0, false);
 
-            var settings = new Settings();
-            settings.Math.Decimals = 6;
-            settings.Markdown = MarkdownMode.Full; // a #md directive in the source overrides this
-
-            var parser = new ExpressionParser { Settings = settings };
+            var parser = new ExpressionParser { Settings = BuildSettings() };
             parser.Parse(unwrapped ?? source, true, false);
             return parser.HtmlResult ?? string.Empty;
+        }
+
+        private Settings BuildSettings()
+        {
+            var settings = new Settings();
+            settings.Math.Decimals = _decimals;
+            settings.Markdown = MarkdownMode.Full; // a #md directive in the source overrides this
+            return settings;
         }
 
         private string BuildPage(string bodyHtml)
@@ -282,6 +320,8 @@ namespace Calcpad.Avalonia
             _currentFile = null;
             _editor.Text = NewDocument;
             _editor.CaretOffset = _editor.Document.TextLength;
+            _dirty = false;
+            UpdateTitle();
             PopulateSnippetsMenu();
             Render();
         }
@@ -303,6 +343,8 @@ namespace Calcpad.Avalonia
                 if (files.Count == 0) return;
                 _currentFile = files[0].Path.LocalPath;
                 _editor.Text = (await File.ReadAllTextAsync(_currentFile)).Replace("\r\n", "\n").Replace("\r", "\n");
+                _dirty = false;
+                UpdateTitle();
                 RefreshSnippetsMenuIfModeChanged();
                 Render();
             }
@@ -338,6 +380,8 @@ namespace Calcpad.Avalonia
         private async System.Threading.Tasks.Task SaveTo(string path)
         {
             await File.WriteAllTextAsync(path, _editor.Text ?? string.Empty);
+            _dirty = false;
+            UpdateTitle();
             _status.Text = "Saved " + Path.GetFileName(path);
         }
 
@@ -388,10 +432,7 @@ namespace Calcpad.Avalonia
                 // DOCX needs the OpenXml expression list, produced when parsing with getXml = true.
                 var macro = new MacroParser { Include = static (_, _) => string.Empty };
                 macro.Parse(_editor.Text ?? string.Empty, out var unwrapped, null, 0, false);
-                var settings = new Settings();
-                settings.Math.Decimals = 6;
-                settings.Markdown = MarkdownMode.Full;
-                var parser = new ExpressionParser { Settings = settings };
+                var parser = new ExpressionParser { Settings = BuildSettings() };
                 parser.Parse(unwrapped ?? string.Empty, true, true);
 
                 new OpenXmlWriter(parser.OpenXmlExpressions).Convert(parser.HtmlResult, file.Path.LocalPath);
