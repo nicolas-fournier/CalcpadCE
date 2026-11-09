@@ -12,6 +12,29 @@
 
 <br>
 
+> [!IMPORTANT]
+> ## ⚠️ This is a heavily modified fork
+>
+> This repository is a **substantially modified** community fork of
+> [CalcpadCE](https://github.com/imartincei/CalcpadCE) (itself a fork of Calcpad 7.6.2).
+> It diverges significantly from upstream and is **experimental** — behaviour, syntax defaults
+> and the UI differ from the original. Use at your own discretion.
+>
+> **Major changes in this fork:**
+> * **Markdown-first mode** (`#md full`) — prose by default, inline math in `` `…` ``/`$…$`, block `$$…$$`,
+>   headings, lists, tables, fenced code; the `:=` formula operator; a *Convert to Markdown* tool.
+> * **Built-in AI assistant** — streaming Anthropic chat, **agent mode** (reads/evaluates/inserts into the
+>   worksheet via tools), image/PDF attachments, and persistent conversation memory.
+> * **New cross-platform desktop app** — [`Calcpad.Avalonia`](Calcpad.Avalonia/) (Avalonia UI), a path toward
+>   **macOS/Linux** support: AvaloniaEdit editor with syntax highlighting, embedded Chromium preview,
+>   keypad, formatting toolbar, mode-aware snippets, file browser with function insert, document **tabs**,
+>   options bar, `#input` recalculation, and HTML/Word/PDF export. (The main app is still Windows WPF.)
+> * **Editor overhaul** (WPF) — migrated to AvalonEdit; rewired keypad/format/snippets/Find-Replace.
+> * **CI & release** — builds and self-contained release artifacts for the Avalonia app and the CLI on
+>   **Windows and macOS** (in addition to the existing Linux packages).
+>
+> Releases, issues and support for **this fork** live here, not on the upstream repository.
+
 ## 📖 What is CalcpadCE?
 
 CalcpadCE is an open-source tool for mathematical and engineering calculations.
