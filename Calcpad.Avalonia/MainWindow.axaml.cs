@@ -601,7 +601,8 @@ namespace Calcpad.Avalonia
             if (string.IsNullOrWhiteSpace(source)) return "(empty)";
             try
             {
-                var macro = new MacroParser { Include = static (_, _) => string.Empty };
+                SetWorkingDirToWorksheet();
+                var macro = new MacroParser { Include = IncludeResolver };
                 macro.Parse(source, out var unwrapped, null, 0, false);
                 var parser = new ExpressionParser { Settings = BuildSettings() };
                 parser.Parse(unwrapped ?? source, true, false);
@@ -978,7 +979,11 @@ namespace Calcpad.Avalonia
 
         private string RenderHtml(string source)
         {
-            var macro = new MacroParser { Include = static (_, _) => string.Empty };
+            // Resolve relative #include / image paths against the worksheet's folder, like the CLI:
+            // MacroParser.ParseInclude uses Path.GetFullPath against the current directory.
+            SetWorkingDirToWorksheet();
+
+            var macro = new MacroParser { Include = IncludeResolver };
             macro.Parse(source, out var unwrapped, null, 0, false);
 
             var code = unwrapped ?? source;
@@ -1069,6 +1074,52 @@ namespace Calcpad.Avalonia
                 settings.Plot.ImageUri = "file:///" + dir.Replace('\\', '/') + "/";
             }
             return settings;
+        }
+
+        private void SetWorkingDirToWorksheet()
+        {
+            try
+            {
+                var dir = string.IsNullOrEmpty(_currentFile) ? null : Path.GetDirectoryName(_currentFile);
+                if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+                    Directory.SetCurrentDirectory(dir);
+            }
+            catch { /* best effort */ }
+        }
+
+        // Resolves #include directives: reads the referenced file (relative to the current
+        // worksheet's folder), expands nested #includes, and honours #local/#global sections.
+        private string IncludeResolver(string fileName, Queue<string> fields)
+        {
+            var baseDir = string.IsNullOrEmpty(_currentFile)
+                ? Environment.CurrentDirectory
+                : Path.GetDirectoryName(_currentFile) ?? Environment.CurrentDirectory;
+            return ExpandInclude(fileName, baseDir, 0);
+        }
+
+        private static string ExpandInclude(string fileName, string baseDir, int depth)
+        {
+            if (depth > 20) return "'[#include nested too deeply]";
+            string path;
+            try { path = Path.IsPathRooted(fileName) ? fileName : Path.GetFullPath(Path.Combine(baseDir, fileName)); }
+            catch { return $"'[invalid include path: {fileName}]"; }
+            if (!File.Exists(path)) return $"'[#include not found: {fileName}]";
+
+            var dir = Path.GetDirectoryName(path) ?? baseDir;
+            var sb = new StringBuilder();
+            var isLocal = false;
+            foreach (var raw in File.ReadAllText(path).Replace("\r\n", "\n").Replace("\r", "\n").Split('\n'))
+            {
+                var t = raw.TrimStart();
+                if (t.StartsWith("#local", StringComparison.OrdinalIgnoreCase)) { isLocal = true; continue; }
+                if (t.StartsWith("#global", StringComparison.OrdinalIgnoreCase)) { isLocal = false; continue; }
+                if (isLocal) continue;
+                if (t.StartsWith("#include", StringComparison.OrdinalIgnoreCase))
+                    sb.Append(ExpandInclude(t.Substring("#include".Length).Trim(), dir, depth + 1)).Append('\n');
+                else
+                    sb.Append(raw).Append('\n');
+            }
+            return sb.ToString();
         }
 
         private string BuildPage(string bodyHtml)
@@ -1204,7 +1255,8 @@ namespace Calcpad.Avalonia
                 if (file is null) return;
 
                 // DOCX needs the OpenXml expression list, produced when parsing with getXml = true.
-                var macro = new MacroParser { Include = static (_, _) => string.Empty };
+                SetWorkingDirToWorksheet();
+                var macro = new MacroParser { Include = IncludeResolver };
                 macro.Parse(_editor.Text ?? string.Empty, out var unwrapped, null, 0, false);
                 var parser = new ExpressionParser { Settings = BuildSettings() };
                 parser.Parse(unwrapped ?? string.Empty, true, true);
