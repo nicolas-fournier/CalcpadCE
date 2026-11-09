@@ -42,6 +42,7 @@ namespace Calcpad.Avalonia
         private readonly Border _formatBar;
         private readonly Border _filePanel;
         private readonly TreeView _fileTree;
+        private readonly Border _optionsBar;
         private readonly DispatcherTimer _debounce;
         private readonly string _template;   // worksheet HTML head + CSS
         private string _lastHtml = string.Empty;
@@ -50,6 +51,16 @@ namespace Calcpad.Avalonia
         private bool _dirty;
         private bool _snippetsMenuMarkdown;
         private int _decimals = 6;
+        private string? _selectedFilePath;
+
+        // Options-bar state (mapped onto Settings in BuildSettings).
+        private bool _substitute = true;
+        private bool _formatEquations = true;
+        private bool _complex;
+        private bool _adaptivePlot = true;
+        private int _degrees;                 // 0 = deg, 1 = rad, 2 = grad
+        private string _units = "m";
+        private PlotSettings.ColorScales _palette = PlotSettings.ColorScales.Rainbow;
 
         public MainWindow()
         {
@@ -63,11 +74,14 @@ namespace Calcpad.Avalonia
             _formatBar = this.FindControl<Border>("FormatBar")!;
             _filePanel = this.FindControl<Border>("FilePanel")!;
             _fileTree = this.FindControl<TreeView>("FileTree")!;
+            _optionsBar = this.FindControl<Border>("OptionsBar")!;
+            _fileTree.DoubleTapped += (_, _) => OpenSelectedFile();
 
             _template = LoadTemplate();
             LoadHighlighting();
             BuildKeypad();
             BuildFormatBar();
+            BuildOptionsBar();
 
             _debounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
             _debounce.Tick += (_, _) => { _debounce.Stop(); Render(); };
@@ -293,9 +307,15 @@ namespace Calcpad.Avalonia
             return node;
         }
 
-        private async void FileTree_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+        // Selecting a file only tracks it; double-click opens it, the Insert button includes it.
+        private void FileTree_SelectionChanged(object? sender, SelectionChangedEventArgs e)
         {
-            if (_fileTree.SelectedItem is not TreeViewItem item || item.Tag is not string path) return;
+            _selectedFilePath = (_fileTree.SelectedItem as TreeViewItem)?.Tag as string;
+        }
+
+        private async void OpenSelectedFile()
+        {
+            if (_selectedFilePath is not string path) return;
             try
             {
                 _currentFile = path;
@@ -306,6 +326,61 @@ namespace Calcpad.Avalonia
                 Render();
             }
             catch (Exception ex) { _status.Text = "Open failed: " + ex.Message; }
+        }
+
+        // Inserts an #include directive for the selected file at the caret (like the WPF library).
+        private void InsertFile_Click(object? sender, RoutedEventArgs e)
+        {
+            if (_selectedFilePath is not string path) { _status.Text = "Select a file first"; return; }
+            InsertAtCaret($"#include {path}\n");
+        }
+
+        // ---- Options bar ----
+
+        private void BuildOptionsBar()
+        {
+            var bar = new WrapPanel { Orientation = Orientation.Horizontal };
+
+            CheckBox Check(string label, bool initial, Action<bool> set)
+            {
+                var cb = new CheckBox
+                {
+                    Content = label,
+                    IsChecked = initial,
+                    Margin = new global::Avalonia.Thickness(0, 0, 12, 0),
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                cb.IsCheckedChanged += (_, _) => { set(cb.IsChecked == true); if (_ready) Render(); };
+                return cb;
+            }
+
+            bar.Children.Add(Check("Substitute", _substitute, v => _substitute = v));
+            bar.Children.Add(Check("Format equations", _formatEquations, v => _formatEquations = v));
+            bar.Children.Add(Check("Complex", _complex, v => _complex = v));
+            bar.Children.Add(Check("Adaptive plots", _adaptivePlot, v => _adaptivePlot = v));
+
+            bar.Children.Add(LabeledCombo("Angles", new[] { "Deg", "Rad", "Grad" }, _degrees, i => _degrees = i));
+            bar.Children.Add(LabeledCombo("Units", new[] { "m", "cm", "mm" }, UnitsIndex(_units), i => _units = i switch { 1 => "cm", 2 => "mm", _ => "m" }));
+
+            var palettes = Enum.GetNames<PlotSettings.ColorScales>();
+            bar.Children.Add(LabeledCombo("Palette", palettes, Array.IndexOf(palettes, _palette.ToString()),
+                i => _palette = Enum.Parse<PlotSettings.ColorScales>(palettes[i])));
+
+            _optionsBar.Child = bar;
+        }
+
+        private static int UnitsIndex(string u) => u switch { "cm" => 1, "mm" => 2, _ => 0 };
+
+        private Control LabeledCombo(string label, string[] items, int selected, Action<int> set)
+        {
+            var combo = new ComboBox { MinWidth = 100, VerticalAlignment = VerticalAlignment.Center };
+            foreach (var it in items) combo.Items.Add(new ComboBoxItem { Content = it });
+            combo.SelectedIndex = selected < 0 ? 0 : selected; // after items are added
+            combo.SelectionChanged += (_, _) => { set(combo.SelectedIndex); if (_ready) Render(); };
+            var wrap = new StackPanel { Orientation = Orientation.Horizontal, Margin = new global::Avalonia.Thickness(0, 0, 12, 0), VerticalAlignment = VerticalAlignment.Center };
+            wrap.Children.Add(new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center, Margin = new global::Avalonia.Thickness(0, 0, 4, 0), Foreground = new SolidColorBrush(Color.Parse("#4B5563")) });
+            wrap.Children.Add(combo);
+            return wrap;
         }
 
         // ---- Formatting toolbar (markdown-aware) ----
@@ -432,9 +507,14 @@ namespace Calcpad.Avalonia
 
         private Settings BuildSettings()
         {
-            var settings = new Settings();
+            var settings = new Settings { Units = _units, Markdown = MarkdownMode.Full };
             settings.Math.Decimals = _decimals;
-            settings.Markdown = MarkdownMode.Full; // a #md directive in the source overrides this
+            settings.Math.Substitute = _substitute;
+            settings.Math.FormatEquations = _formatEquations;
+            settings.Math.IsComplex = _complex;
+            settings.Math.Degrees = _degrees;
+            settings.Plot.IsAdaptive = _adaptivePlot;
+            settings.Plot.ColorScale = _palette;
             return settings;
         }
 

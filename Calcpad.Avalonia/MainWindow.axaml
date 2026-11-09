@@ -50,6 +50,10 @@
     <Border x:Name="FormatBar" DockPanel.Dock="Top" Background="#FFFFFF"
             BorderBrush="#E2E4E8" BorderThickness="0,0,0,1" Padding="8,4"/>
 
+    <!-- Options bar (very bottom) -->
+    <Border x:Name="OptionsBar" DockPanel.Dock="Bottom" Background="#F3F4F6"
+            BorderBrush="#E2E4E8" BorderThickness="0,1,0,0" Padding="8,4"/>
+
     <!-- Keypad (collapsible) -->
     <Border x:Name="KeypadHost" DockPanel.Dock="Bottom" Background="#FAFAFB"
             BorderBrush="#E2E4E8" BorderThickness="0,1,0,0" Padding="8,6"/>
@@ -61,6 +65,8 @@
         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="6" Margin="8,8,8,4">
           <TextBlock Text="Files" FontWeight="SemiBold" VerticalAlignment="Center"/>
           <Button Content="Open folder…" Click="OpenFolder_Click" Padding="6,2"/>
+          <Button Content="Insert" Click="InsertFile_Click" Padding="6,2"
+                  ToolTip.Tip="Insert #include for the selected file at the caret"/>
         </StackPanel>
         <TreeView x:Name="FileTree" SelectionChanged="FileTree_SelectionChanged" Margin="4"/>
       </DockPanel>
