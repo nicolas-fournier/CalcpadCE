@@ -112,6 +112,7 @@ namespace Calcpad.Avalonia
             Directory.CreateDirectory(previewDir);
             _previewFiles = new[] { Path.Combine(previewDir, "preview-a.html"), Path.Combine(previewDir, "preview-b.html") };
             LoadHighlighting();
+            InitHoverTooltips();
             BuildKeypad();
             BuildFormatBar();
             BuildOptionsBar();
@@ -290,6 +291,45 @@ namespace Calcpad.Avalonia
             _debounce.Stop();
             _debounce.Start();
         }
+
+        // ---- Hover tooltips (units / functions / constants) ----
+
+        private void InitHoverTooltips()
+        {
+            var tv = _editor.TextArea.TextView;
+            tv.PointerHover += OnEditorPointerHover;
+            tv.PointerHoverStopped += (_, _) => ToolTip.SetIsOpen(_editor, false);
+        }
+
+        private void OnEditorPointerHover(object? sender, PointerEventArgs e)
+        {
+            try
+            {
+                var tv = _editor.TextArea.TextView;
+                var pos = tv.GetPosition(e.GetPosition(tv) + tv.ScrollOffset);
+                if (pos is null) { ToolTip.SetIsOpen(_editor, false); return; }
+                var offset = _editor.Document.GetOffset(pos.Value.Location);
+                var word = WordAt(offset);
+                var desc = word is null ? null : CalcpadGlossary.Describe(word);
+                if (desc is null) { ToolTip.SetIsOpen(_editor, false); return; }
+                ToolTip.SetTip(_editor, desc);
+                ToolTip.SetIsOpen(_editor, true);
+            }
+            catch { /* hovering is best-effort */ }
+        }
+
+        private string? WordAt(int offset)
+        {
+            var doc = _editor.Document;
+            if (offset < 0 || offset > doc.TextLength) return null;
+            int s = offset, en = offset;
+            while (s > 0 && IsWordChar(doc.GetCharAt(s - 1))) s--;
+            while (en < doc.TextLength && IsWordChar(doc.GetCharAt(en))) en++;
+            return en > s ? doc.GetText(s, en - s) : null;
+        }
+
+        private static bool IsWordChar(char c)
+            => char.IsLetterOrDigit(c) || c == '_' || "µΩ°²³".IndexOf(c) >= 0;
 
         // Inserts text at the caret. A '‸' marks where the caret should land; any selected text
         // is placed at that marker (so e.g. "**‸**" wraps the selection in bold).
@@ -887,7 +927,59 @@ namespace Calcpad.Avalonia
             Add("$$", "$$ ‸ $$", "‸", "Block math");
             Add("Rule", "\n---\n", "<hr/>", "Horizontal rule");
 
+            bar.Children.Add(new Border { Width = 10 });
+            var calc = MakeButton("↔ Calc", ToggleCalc);
+            ToolTip.SetTip(calc, "Toggle the line or selection between prose/text and a calculation");
+            bar.Children.Add(calc);
+
             _formatBar.Child = bar;
+        }
+
+        // Toggles the current line (or selection) between prose/text and a calculation.
+        // Markdown mode wraps/unwraps in $…$; classic mode adds/removes a leading ' comment.
+        private void ToggleCalc()
+        {
+            int start, length;
+            string text;
+            if (_editor.SelectionLength > 0)
+            {
+                start = _editor.SelectionStart;
+                length = _editor.SelectionLength;
+                text = _editor.SelectedText ?? string.Empty;
+            }
+            else
+            {
+                var line = _editor.Document.GetLineByOffset(_editor.CaretOffset);
+                start = line.Offset;
+                length = line.Length;
+                text = _editor.Document.GetText(line.Offset, line.Length);
+            }
+
+            // Preserve leading indentation; operate on the trimmed content.
+            var leading = text.Length - text.TrimStart().Length;
+            var indent = text.Substring(0, leading);
+            var body = text.Substring(leading).TrimEnd();
+
+            string replacement;
+            if (CurrentMarkdownFull())
+            {
+                if (body.StartsWith("$$") && body.EndsWith("$$") && body.Length >= 4)
+                    replacement = body.Substring(2, body.Length - 4).Trim();
+                else if (body.StartsWith("$") && body.EndsWith("$") && body.Length >= 2)
+                    replacement = body.Substring(1, body.Length - 2).Trim();
+                else
+                    replacement = "$" + body + "$";
+            }
+            else
+            {
+                replacement = body.StartsWith("'") || body.StartsWith("\"")
+                    ? body.Substring(1)
+                    : "'" + body;
+            }
+
+            _editor.Document.Replace(start, length, indent + replacement);
+            _editor.Focus();
+            ScheduleRender();
         }
 
         // ---- Snippets (mode-aware) ----
