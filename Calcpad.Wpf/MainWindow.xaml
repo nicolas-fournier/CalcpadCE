@@ -377,7 +377,7 @@
                     <MenuItem Click="Button_Click" Tag="∠" Icon=" ∠"
                               Header="{x:Static wpf:MainWindowResources.Phasor}"/>
                     <Separator/>
-                    <MenuItem Click="Button_Click" Tag="=" Icon="  ="
+                    <MenuItem Click="Button_Click" Tag="=␣:=" Icon="  ="
                               Header="{x:Static wpf:MathResources.Assignment}"/>
                     <MenuItem Click="Button_Click" Tag="←" Icon="  ←"
                               Header="{x:Static wpf:MainWindowResources.OuterVariableAssignment}"/>
@@ -2708,7 +2708,7 @@
                         <Button Click="Button_Click" Content="."     Tag="."
                                 Style="{StaticResource RoundButton}" Margin="35,113,0,0"
                                 ToolTip="{x:Static wpf:MathResources.DecimalPoint}"/>
-                        <Button Click="Button_Click" Content="="     Tag=" = "
+                        <Button Click="Button_Click" Content="="     Tag=" = ␣ := "
                                 Style="{StaticResource RoundButton}" Margin="67,113,0,0"
                                 ToolTip="{x:Static wpf:MathResources.Assignment}"/>
                         <Button Click="Button_Click" Content="*"     Tag="*"

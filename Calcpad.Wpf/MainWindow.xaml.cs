@@ -685,7 +685,9 @@ namespace Calcpad.Wpf
             var index = tag.IndexOf('␣') + 1;
             if (index > 0)
             {
-                if (MarkdownCheckBox.IsChecked.Value == true)
+                // A '␣'-separated tag carries "classic␣markdown"; follow the document's actual
+                // mode (its #md directive), so keypad/format buttons match the snippets.
+                if (CurrentMarkdownFull())
                     tag = tag[index..];
                 else
                     tag = tag[..(index - 1)];
