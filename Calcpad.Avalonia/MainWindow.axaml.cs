@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Tasks;
 using System.Xml;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -51,8 +52,13 @@ namespace Calcpad.Avalonia
         private TextBox? _aiLog;
         private TextBox? _aiInput;
         private readonly List<ChatMessage> _aiHistory = new();
+        private readonly List<ChatAttachment> _aiAttachments = new();
+        private readonly List<AgentMessage> _agentHistory = new();
+        private IChatHistoryStore? _aiStore;
+        private TextBlock? _aiAttachInfo;
         private string _lastAiReply = string.Empty;
         private bool _aiBusy;
+        private bool _agentMode;
         private readonly DispatcherTimer _debounce;
         private readonly string _template;   // worksheet HTML head + CSS
         private string _lastHtml = string.Empty;
@@ -326,6 +332,20 @@ namespace Calcpad.Avalonia
             DockPanel.SetDock(_aiKey, Dock.Top);
             root.Children.Add(_aiKey);
 
+            // Mode row: agent toggle + attach.
+            var modeRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new global::Avalonia.Thickness(0, 0, 0, 4) };
+            DockPanel.SetDock(modeRow, Dock.Top);
+            var agent = new CheckBox { Content = "Agent mode", IsChecked = _agentMode, VerticalAlignment = VerticalAlignment.Center };
+            agent.IsCheckedChanged += (_, _) => _agentMode = agent.IsChecked == true;
+            ToolTip.SetTip(agent, "Let the assistant read, evaluate and insert into the worksheet via tools");
+            var attach = new Button { Content = "Attach…" };
+            attach.Click += (_, _) => AiAttach();
+            _aiAttachInfo = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Foreground = new SolidColorBrush(Color.Parse("#6B7280")), FontSize = 11 };
+            modeRow.Children.Add(agent);
+            modeRow.Children.Add(attach);
+            modeRow.Children.Add(_aiAttachInfo);
+            root.Children.Add(modeRow);
+
             // Input + buttons at the bottom.
             var bottom = new StackPanel { Orientation = Orientation.Vertical, Spacing = 4 };
             DockPanel.SetDock(bottom, Dock.Bottom);
@@ -336,7 +356,7 @@ namespace Calcpad.Avalonia
             var insert = new Button { Content = "Insert reply" };
             insert.Click += (_, _) => { if (!string.IsNullOrEmpty(_lastAiReply)) InsertAtCaret(_lastAiReply); };
             var clear = new Button { Content = "Clear" };
-            clear.Click += (_, _) => { _aiHistory.Clear(); if (_aiLog is not null) _aiLog.Text = string.Empty; };
+            clear.Click += (_, _) => AiClear();
             buttons.Children.Add(send);
             buttons.Children.Add(insert);
             buttons.Children.Add(clear);
@@ -358,6 +378,58 @@ namespace Calcpad.Avalonia
             root.Children.Add(_aiLog);
 
             _aiPanel.Child = root;
+
+            // Persistent memory: reload the previous conversation.
+            var storePath = Path.Combine(Path.GetDirectoryName(StateFile)!, "ai-history.json");
+            _aiStore = new JsonChatHistoryStore(storePath);
+            foreach (var m in _aiStore.Load())
+            {
+                _aiHistory.Add(m);
+                AppendAi($"{(m.Role == AiRole.User ? "You" : "AI")}: {m.Text}\n\n");
+            }
+        }
+
+        private void AiClear()
+        {
+            _aiHistory.Clear();
+            _agentHistory.Clear();
+            _aiAttachments.Clear();
+            UpdateAttachInfo();
+            _aiStore?.Clear();
+            if (_aiLog is not null) _aiLog.Text = string.Empty;
+        }
+
+        private async void AiAttach()
+        {
+            try
+            {
+                var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+                {
+                    Title = "Attach an image or PDF",
+                    AllowMultiple = true,
+                    FileTypeFilter = new[]
+                    {
+                        new FilePickerFileType("Images & PDF") { Patterns = new[] { "*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp", "*.pdf" } }
+                    }
+                });
+                foreach (var f in files)
+                {
+                    var path = f.Path.LocalPath;
+                    var bytes = await File.ReadAllBytesAsync(path);
+                    var ext = Path.GetExtension(path).ToLowerInvariant();
+                    _aiAttachments.Add(ext == ".pdf"
+                        ? ChatAttachment.Pdf(bytes, Path.GetFileName(path))
+                        : ChatAttachment.Image(bytes, ext switch { ".jpg" or ".jpeg" => "image/jpeg", ".gif" => "image/gif", ".webp" => "image/webp", _ => "image/png" }, Path.GetFileName(path)));
+                }
+                UpdateAttachInfo();
+            }
+            catch (Exception ex) { AppendAi($"[attach failed: {ex.Message}]\n"); }
+        }
+
+        private void UpdateAttachInfo()
+        {
+            if (_aiAttachInfo is not null)
+                _aiAttachInfo.Text = _aiAttachments.Count == 0 ? string.Empty : $"{_aiAttachments.Count} attached";
         }
 
         private async void AiSend()
@@ -371,33 +443,86 @@ namespace Calcpad.Avalonia
             _aiBusy = true;
             _aiInput.Text = string.Empty;
             AppendAi($"You: {prompt}\n");
+            var options = new AiOptions { ApiKey = key, SystemPrompt = CalcpadSystemPrompt.Default };
 
-            // Give the assistant the current worksheet as context.
-            var userText = $"Current worksheet:\n```\n{_editor.Text}\n```\n\n{prompt}";
-            _aiHistory.Add(ChatMessage.FromUser(userText));
-
-            AppendAi("\nAI: ");
-            var sb = new StringBuilder();
             try
             {
-                var client = new AnthropicAiClient(new AiOptions { ApiKey = key, SystemPrompt = CalcpadSystemPrompt.Default });
-                await foreach (var token in client.StreamReplyAsync(_aiHistory))
-                {
-                    sb.Append(token);
-                    AppendAi(token);
-                }
+                if (_agentMode)
+                    await RunAgentAsync(prompt, options);
+                else
+                    await RunChatAsync(prompt, options);
             }
             catch (Exception ex) { AppendAi($"\n[error: {ex.Message}]"); }
 
-            _lastAiReply = sb.ToString();
-            _aiHistory.Add(ChatMessage.FromAssistant(_lastAiReply));
+            _aiStore?.Save(_aiHistory);
             AppendAi("\n\n");
             _aiBusy = false;
+        }
+
+        // Plain streaming chat (optionally multimodal with attachments).
+        private async Task RunChatAsync(string prompt, AiOptions options)
+        {
+            var userText = $"Current worksheet:\n```\n{_editor.Text}\n```\n\n{prompt}";
+            _aiHistory.Add(_aiAttachments.Count > 0
+                ? ChatMessage.FromUser(userText, _aiAttachments.ToList())
+                : ChatMessage.FromUser(userText));
+            _aiAttachments.Clear();
+            UpdateAttachInfo();
+
+            AppendAi("\nAI: ");
+            var sb = new StringBuilder();
+            var client = new AnthropicAiClient(options);
+            await foreach (var token in client.StreamReplyAsync(_aiHistory))
+            {
+                sb.Append(token);
+                AppendAi(token);
+            }
+            _lastAiReply = sb.ToString();
+            _aiHistory.Add(ChatMessage.FromAssistant(_lastAiReply));
+        }
+
+        // Agent mode: the assistant can read, evaluate and insert into the worksheet via tools.
+        private async Task RunAgentAsync(string prompt, AiOptions options)
+        {
+            var tools = CalcpadAgentTools.Create(
+                getWorksheet: () => _editor.Text ?? string.Empty,
+                insertText: text => { InsertAtCaret(text); return "Inserted at the caret."; },
+                evaluate: EvaluateForAssistant,
+                getResult: () => _lastHtml);
+
+            var caller = new AnthropicModelCaller(options);
+            var conv = new AgenticConversation(caller, tools);
+            conv.ToolInvoking += call => AppendAi($"\n[tool: {call.Name}] ");
+            conv.AssistantText += t => AppendAi(t);
+
+            _agentHistory.Add(AgentMessage.User(prompt));
+            AppendAi("\nAI: ");
+            var reply = await conv.RunAsync(_agentHistory);
+            _agentHistory.Add(AgentMessage.Assistant(reply, Array.Empty<AgentToolCall>()));
+            _lastAiReply = reply;
+            _aiHistory.Add(ChatMessage.FromUser(prompt));
+            _aiHistory.Add(ChatMessage.FromAssistant(reply));
+        }
+
+        // Evaluates a Calcpad snippet and returns a plain-text result for the agent to inspect.
+        private string EvaluateForAssistant(string source)
+        {
+            if (string.IsNullOrWhiteSpace(source)) return "(empty)";
+            try
+            {
+                var macro = new MacroParser { Include = static (_, _) => string.Empty };
+                macro.Parse(source, out var unwrapped, null, 0, false);
+                var parser = new ExpressionParser { Settings = BuildSettings() };
+                parser.Parse(unwrapped ?? source, true, false);
+                return parser.HtmlResult ?? "(no result)";
+            }
+            catch (Exception ex) { return "error: " + ex.Message; }
         }
 
         private void AppendAi(string text)
         {
             if (_aiLog is null) return;
+            if (!Dispatcher.UIThread.CheckAccess()) { Dispatcher.UIThread.Post(() => AppendAi(text)); return; }
             _aiLog.Text += text;
             _aiLog.CaretIndex = _aiLog.Text?.Length ?? 0; // keep the latest visible
         }
