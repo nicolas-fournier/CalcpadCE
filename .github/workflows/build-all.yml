@@ -16,6 +16,11 @@ jobs:
     with:
       version: ${{ inputs.version }}
 
+  build-avalonia-release:
+    uses: ./.github/workflows/build-avalonia-release.yml
+    with:
+      version: ${{ inputs.version }}
+
   build-windows-portable:
     runs-on: windows-latest
     steps:

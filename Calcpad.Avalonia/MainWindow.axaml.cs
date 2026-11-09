@@ -62,6 +62,7 @@ namespace Calcpad.Avalonia
         private bool _formatEquations = true;
         private bool _complex;
         private bool _adaptivePlot = true;
+        private bool _embedImages = true;     // base64 plots in the HTML (needed for the preview)
         private int _degrees;                 // 0 = deg, 1 = rad, 2 = grad
         private string _units = "m";
         private PlotSettings.ColorScales _palette = PlotSettings.ColorScales.Rainbow;
@@ -383,6 +384,9 @@ namespace Calcpad.Avalonia
             bar.Children.Add(Check("Format equations", _formatEquations, v => _formatEquations = v));
             bar.Children.Add(Check("Complex", _complex, v => _complex = v));
             bar.Children.Add(Check("Adaptive plots", _adaptivePlot, v => _adaptivePlot = v));
+            var embed = Check("Embed images", _embedImages, v => _embedImages = v);
+            ToolTip.SetTip(embed, "Embed plots/images in the HTML as base64; save to files if unchecked");
+            bar.Children.Add(embed);
 
             bar.Children.Add(LabeledCombo("Angles", new[] { "Deg", "Rad", "Grad" }, _degrees, i => _degrees = i));
             bar.Children.Add(LabeledCombo("Units", new[] { "m", "cm", "mm" }, UnitsIndex(_units), i => _units = i switch { 1 => "cm", 2 => "mm", _ => "m" }));
@@ -600,6 +604,18 @@ namespace Calcpad.Avalonia
             settings.Math.Degrees = _degrees;
             settings.Plot.IsAdaptive = _adaptivePlot;
             settings.Plot.ColorScale = _palette;
+            if (_embedImages)
+            {
+                settings.Plot.ImagePath = string.Empty;   // empty ⇒ plots embedded as base64
+                settings.Plot.ImageUri = string.Empty;
+            }
+            else
+            {
+                var dir = Path.Combine(Path.GetTempPath(), "CalcpadAvalonia", "img");
+                Directory.CreateDirectory(dir);
+                settings.Plot.ImagePath = dir;
+                settings.Plot.ImageUri = "file:///" + dir.Replace('\\', '/') + "/";
+            }
             return settings;
         }
 
