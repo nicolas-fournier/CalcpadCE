@@ -1,0 +1,61 @@
+name: Build CLI Release
+
+# Publishes the cross-platform CLI (Calcpad.Cli) as self-contained, downloadable release
+# artifacts for Windows and macOS (Intel + Apple Silicon). Linux tarballs/.deb/.rpm are
+# produced by build-all.yml; this adds the Windows and macOS binaries.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+
+jobs:
+  publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+            archive: zip
+          - os: macos-latest
+            rid: osx-x64
+            archive: tar
+          - os: macos-latest
+            rid: osx-arm64
+            archive: tar
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish self-contained
+        run: >
+          dotnet publish Calcpad.Cli/Calcpad.Cli.csproj
+          -c Release
+          -r ${{ matrix.rid }}
+          --self-contained true
+          -p:Version=${{ inputs.version }}
+          -o "CalcpadCE-cli-${{ inputs.version }}-${{ matrix.rid }}"
+
+      - name: Create zip (Windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: Compress-Archive -Path "CalcpadCE-cli-${{ inputs.version }}-${{ matrix.rid }}" -DestinationPath "CalcpadCE-cli-${{ inputs.version }}-${{ matrix.rid }}.zip"
+
+      - name: Create tarball (macOS)
+        if: matrix.archive == 'tar'
+        run: tar -czf "CalcpadCE-cli-${{ inputs.version }}-${{ matrix.rid }}.tar.gz" "CalcpadCE-cli-${{ inputs.version }}-${{ matrix.rid }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: CalcpadCE-cli-${{ inputs.version }}-${{ matrix.rid }}
+          path: CalcpadCE-cli-${{ inputs.version }}-${{ matrix.rid }}.*

@@ -21,6 +21,11 @@ jobs:
     with:
       version: ${{ inputs.version }}
 
+  build-cli-release:
+    uses: ./.github/workflows/build-cli-release.yml
+    with:
+      version: ${{ inputs.version }}
+
   build-windows-portable:
     runs-on: windows-latest
     steps:
