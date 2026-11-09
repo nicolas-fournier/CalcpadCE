@@ -252,9 +252,9 @@ namespace Calcpad.Wpf
             _findReplace.BeginSearch += FindReplace_BeginSearch;
             _findReplace.EndSearch += FindReplace_EndSearch;
             _findReplace.EndReplace += FindReplace_EndReplace;
-            PopulateSnippetsMenu();
             InitAvalonEditor();
             EnableAvalonEditor();
+            PopulateSnippetsMenu(); // after the editor text is set, so the mode is known
             _isTextChangedEnabled = true;
         }
 
@@ -300,7 +300,8 @@ namespace Calcpad.Wpf
         }
 
         // Partitions the existing completion catalogue (shared with the classic editor) into
-        // #directives, $methods and identifiers (functions/units), and adds markdown snippets.
+        // #directives, $methods and identifiers (functions/units). Snippets are added per
+        // document mode at completion time (see BuildIdentifierItems / SnippetItems).
         private void BuildAvalonCompletionSets()
         {
             _acId = new();
@@ -315,13 +316,46 @@ namespace Calcpad.Wpf
                     else _acId.Add(new(s));
                 }
             }
-            // Snippets: filter by key, show "key — Title" in the list, describe with Title + preview.
-            foreach (var sn in Calcpad.AI.CalcpadSnippets.All)
-                _acId.Add(new Editor.CalcpadCompletionData(
+        }
+
+        // Snippet completion rows for the current document mode: filter by key, show "key — Title"
+        // in the list, describe with Title + preview.
+        private System.Collections.Generic.IEnumerable<Editor.CalcpadCompletionData> SnippetItems()
+        {
+            foreach (var sn in Calcpad.AI.CalcpadSnippets.ForMode(CurrentMarkdownFull()))
+                yield return new Editor.CalcpadCompletionData(
                     sn.Key, sn.Body,
                     description: sn.Title + "\n\n" + sn.Body,
                     priority: 1,
-                    content: $"{sn.Key}  —  {sn.Title}"));
+                    content: $"{sn.Key}  —  {sn.Title}");
+        }
+
+        // Whether the worksheet is currently in markdown-first mode (#md full). The effective
+        // mode is the last #md directive in the source; if none, fall back to the parser setting.
+        private bool CurrentMarkdownFull()
+        {
+            var text = CodeEditorAvalon?.Text;
+            if (!string.IsNullOrEmpty(text))
+            {
+                var lines = text.Split('\n');
+                for (var i = lines.Length - 1; i >= 0; i--)
+                {
+                    var t = lines[i].Trim();
+                    if (t.Length == 0 || t[0] != '#')
+                        continue;
+                    if (t.StartsWith("#md", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var arg = t.Substring(3).Trim();
+                        if (arg.Equals("full", StringComparison.OrdinalIgnoreCase))
+                            return true;
+                        if (arg.Equals("off", StringComparison.OrdinalIgnoreCase) ||
+                            arg.Equals("on", StringComparison.OrdinalIgnoreCase) ||
+                            arg.Length == 0)
+                            return false;
+                    }
+                }
+            }
+            return _parser is not null && _parser.Settings.Markdown == Calcpad.Core.MarkdownMode.Full;
         }
 
         private void AvalonText_TextEntered(object sender, System.Windows.Input.TextCompositionEventArgs e)
@@ -383,6 +417,7 @@ namespace Calcpad.Wpf
         private System.Collections.Generic.List<Editor.CalcpadCompletionData> BuildIdentifierItems()
         {
             var list = new System.Collections.Generic.List<Editor.CalcpadCompletionData>(_acId);
+            list.AddRange(SnippetItems());
             try
             {
                 var d = _highlighter.Defined;
@@ -407,6 +442,7 @@ namespace Calcpad.Wpf
             if (!_useAvalon || !_isTextChangedEnabled)
                 return;
 
+            RefreshSnippetsMenuIfModeChanged();
             _highlighter.Defined.Get(InputTextLines, IsComplex);
             if (IsAutoRun)
                 CalculateAsync();
@@ -492,11 +528,14 @@ namespace Calcpad.Wpf
             InsertIntoAvalon(tag);
         }
 
-        // Builds the Snippets menu from the shared markdown-first catalogue so the editor and the
-        // AI assistant stay in sync. Each item inserts its body at the caret.
+        // Builds the Snippets menu from the shared catalogue, filtered to the current document
+        // mode (markdown-first vs classic) so the editor and the AI assistant stay in sync.
+        // Each item inserts its body at the caret.
         private void PopulateSnippetsMenu()
         {
-            foreach (var snippet in Calcpad.AI.CalcpadSnippets.All)
+            _snippetsMenuMarkdown = CurrentMarkdownFull();
+            MenuSnippets.Items.Clear();
+            foreach (var snippet in Calcpad.AI.CalcpadSnippets.ForMode(_snippetsMenuMarkdown))
             {
                 var item = new MenuItem { Header = snippet.Title, Tag = snippet.Body };
                 item.Click += (s, _) =>
@@ -506,6 +545,16 @@ namespace Calcpad.Wpf
                 };
                 MenuSnippets.Items.Add(item);
             }
+        }
+
+        private bool _snippetsMenuMarkdown;
+
+        // Rebuilds the Snippets menu only when the document's markdown mode actually flips,
+        // keeping it in step with the editor without cost on every keystroke.
+        private void RefreshSnippetsMenuIfModeChanged()
+        {
+            if (CurrentMarkdownFull() != _snippetsMenuMarkdown)
+                PopulateSnippetsMenu();
         }
 
         private static string AddCultureExt(string ext) => string.Equals(_currentCultureName, "en", StringComparison.Ordinal) ?
@@ -763,6 +812,7 @@ namespace Calcpad.Wpf
             _isTextChangedEnabled = false;
             CodeEditorAvalon.Text = (text ?? string.Empty).Replace("\r\n", "\n").Replace("\r", "\n");
             _isTextChangedEnabled = true;
+            RefreshSnippetsMenuIfModeChanged();
             _highlighter.Defined.Get(InputTextLines, IsComplex);
             _forceHighlight = true;
         }
