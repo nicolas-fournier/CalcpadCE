@@ -84,6 +84,7 @@ namespace Calcpad.Avalonia
         private bool _complex;
         private bool _adaptivePlot = true;
         private bool _embedImages = true;     // base64 plots in the HTML (needed for the preview)
+        private bool _relativePaths = true;   // insert #include/image paths relative to the worksheet
         private int _degrees;                 // 0 = deg, 1 = rad, 2 = grad
         private string _units = "m";
         private PlotSettings.ColorScales _palette = PlotSettings.ColorScales.Rainbow;
@@ -759,7 +760,7 @@ namespace Calcpad.Avalonia
             switch (_selectedTag)
             {
                 case FunctionRef fr: InsertFunction(fr); break;
-                case string path: InsertAtCaret($"#include {path}\n"); break;
+                case string path: InsertAtCaret($"#include {BuildLinkedPath(path)}\n"); break;
                 default: _status.Text = "Select a file or function first"; break;
             }
         }
@@ -768,10 +769,37 @@ namespace Calcpad.Avalonia
         private void InsertFunction(FunctionRef fr)
         {
             var text = _editor.Text ?? string.Empty;
-            var include = $"#include {fr.FilePath}";
+            var include = $"#include {BuildLinkedPath(fr.FilePath)}";
             if (text.IndexOf(include, StringComparison.OrdinalIgnoreCase) < 0)
                 _editor.Document.Insert(0, include + "\n");
             InsertAtCaret(fr.Call + "\n");
+        }
+
+        // Returns the path to embed in the document: relative to the current worksheet's folder
+        // when "Relative paths" is on and the worksheet is saved, otherwise the absolute path.
+        private string BuildLinkedPath(string filePath)
+        {
+            if (_relativePaths && !string.IsNullOrEmpty(_currentFile))
+            {
+                try
+                {
+                    var docDir = Path.GetDirectoryName(_currentFile);
+                    if (!string.IsNullOrEmpty(docDir))
+                    {
+                        var rel = Path.GetRelativePath(docDir, filePath).Replace('\\', '/');
+                        if (!Path.IsPathRooted(rel)) // cross-volume → GetRelativePath returns absolute
+                        {
+                            if (!rel.StartsWith("./", StringComparison.Ordinal) && !rel.StartsWith("../", StringComparison.Ordinal))
+                                rel = "./" + rel;
+                            return rel;
+                        }
+                    }
+                }
+                catch { /* fall through to absolute */ }
+            }
+            else if (_relativePaths && string.IsNullOrEmpty(_currentFile))
+                _status.Text = "Save the worksheet first to use relative paths (absolute used)";
+            return filePath.Replace('\\', '/');
         }
 
         // ---- Options bar ----
@@ -800,6 +828,9 @@ namespace Calcpad.Avalonia
             var embed = Check("Embed images", _embedImages, v => _embedImages = v);
             ToolTip.SetTip(embed, "Embed plots/images in the HTML as base64; save to files if unchecked");
             bar.Children.Add(embed);
+            var rel = Check("Relative paths", _relativePaths, v => _relativePaths = v);
+            ToolTip.SetTip(rel, "Insert #include and image paths relative to the current worksheet (not absolute)");
+            bar.Children.Add(rel);
 
             bar.Children.Add(LabeledCombo("Angles", new[] { "Deg", "Rad", "Grad" }, _degrees, i => _degrees = i));
             bar.Children.Add(LabeledCombo("Units", new[] { "m", "cm", "mm" }, UnitsIndex(_units), i => _units = i switch { 1 => "cm", 2 => "mm", _ => "m" }));
