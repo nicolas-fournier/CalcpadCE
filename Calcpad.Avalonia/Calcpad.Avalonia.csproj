@@ -23,10 +23,13 @@
     <PackageReference Include="Avalonia.AvaloniaEdit" Version="11.3.0" />
     <!-- Embedded Chromium (CefGlue) web view: free, cross-platform (Windows/macOS/Linux). -->
     <PackageReference Include="WebViewControl-Avalonia" Version="3.120.14" />
+    <!-- Pin the patched version over Avalonia's transitive one (advisory GHSA-xrw6-gwf8-vvr9). -->
+    <PackageReference Include="Tmds.DBus.Protocol" Version="0.21.3" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Calcpad.Core\Calcpad.Core.csproj" />
+    <ProjectReference Include="..\Calcpad.OpenXml\Calcpad.OpenXml.csproj" />
   </ItemGroup>
 
   <ItemGroup>

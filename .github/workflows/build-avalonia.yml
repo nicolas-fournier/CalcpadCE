@@ -1,0 +1,26 @@
+name: Build Avalonia
+
+# Builds the cross-platform Avalonia desktop app on Windows and macOS to prove it
+# compiles on both (the macOS job is the closest CI check to running it on a Mac).
+
+on:
+  workflow_call:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build Calcpad.Avalonia
+        run: dotnet build Calcpad.Avalonia -c Release

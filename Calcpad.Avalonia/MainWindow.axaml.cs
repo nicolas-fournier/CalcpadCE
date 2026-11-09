@@ -16,6 +16,7 @@ using AvaloniaEdit.Highlighting;
 using AvaloniaEdit.Highlighting.Xshd;
 using Calcpad.AI;
 using Calcpad.Core;
+using Calcpad.OpenXml;
 using WebViewControl;
 
 namespace Calcpad.Avalonia
@@ -340,6 +341,8 @@ namespace Calcpad.Avalonia
             _status.Text = "Saved " + Path.GetFileName(path);
         }
 
+        // Opens the styled page in the default browser (also the cross-platform Print/PDF path:
+        // the browser's Print dialog offers "Save as PDF" on Windows, macOS and Linux).
         private void OpenInBrowser_Click(object? sender, RoutedEventArgs e)
         {
             try
@@ -349,6 +352,58 @@ namespace Calcpad.Avalonia
                 Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
             }
             catch (Exception ex) { _status.Text = "Open failed: " + ex.Message; }
+        }
+
+        private async void ExportHtml_Click(object? sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+                {
+                    Title = "Export as HTML",
+                    DefaultExtension = "html",
+                    SuggestedFileName = SuggestedName("html"),
+                    FileTypeChoices = new[] { new FilePickerFileType("HTML") { Patterns = new[] { "*.html" } } }
+                });
+                if (file is null) return;
+                await File.WriteAllTextAsync(file.Path.LocalPath, BuildPage(_lastHtml), new UTF8Encoding(false));
+                _status.Text = "Exported " + Path.GetFileName(file.Path.LocalPath);
+            }
+            catch (Exception ex) { _status.Text = "Export failed: " + ex.Message; }
+        }
+
+        private async void ExportDocx_Click(object? sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+                {
+                    Title = "Export as Word document",
+                    DefaultExtension = "docx",
+                    SuggestedFileName = SuggestedName("docx"),
+                    FileTypeChoices = new[] { new FilePickerFileType("Word") { Patterns = new[] { "*.docx" } } }
+                });
+                if (file is null) return;
+
+                // DOCX needs the OpenXml expression list, produced when parsing with getXml = true.
+                var macro = new MacroParser { Include = static (_, _) => string.Empty };
+                macro.Parse(_editor.Text ?? string.Empty, out var unwrapped, null, 0, false);
+                var settings = new Settings();
+                settings.Math.Decimals = 6;
+                settings.Markdown = MarkdownMode.Full;
+                var parser = new ExpressionParser { Settings = settings };
+                parser.Parse(unwrapped ?? string.Empty, true, true);
+
+                new OpenXmlWriter(parser.OpenXmlExpressions).Convert(parser.HtmlResult, file.Path.LocalPath);
+                _status.Text = "Exported " + Path.GetFileName(file.Path.LocalPath);
+            }
+            catch (Exception ex) { _status.Text = "Export failed: " + ex.Message; }
+        }
+
+        private string SuggestedName(string ext)
+        {
+            var baseName = _currentFile is null ? "worksheet" : Path.GetFileNameWithoutExtension(_currentFile);
+            return baseName + "." + ext;
         }
 
         private static string LoadTemplate()

@@ -33,3 +33,6 @@ jobs:
 
   test:
     uses: ./.github/workflows/run-tests.yml
+
+  build-avalonia:
+    uses: ./.github/workflows/build-avalonia.yml

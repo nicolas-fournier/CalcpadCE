@@ -15,6 +15,10 @@
         <Separator/>
         <MenuItem Header="_Save" Click="Save_Click"/>
         <MenuItem Header="Save _As…" Click="SaveAs_Click"/>
+        <Separator/>
+        <MenuItem Header="Export _HTML…" Click="ExportHtml_Click"/>
+        <MenuItem Header="Export _Word (.docx)…" Click="ExportDocx_Click"/>
+        <MenuItem Header="Print / _PDF…" Click="OpenInBrowser_Click"/>
       </MenuItem>
       <MenuItem x:Name="SnippetsMenu" Header="_Snippets"/>
       <MenuItem Header="_View">
