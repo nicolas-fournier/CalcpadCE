@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using System.Xml;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
@@ -45,10 +46,19 @@ namespace Calcpad.Avalonia
         private readonly Border _filePanel;
         private readonly TreeView _fileTree;
         private readonly Border _optionsBar;
+        private readonly Border _aiPanel;
+        private TextBox? _aiKey;
+        private TextBox? _aiLog;
+        private TextBox? _aiInput;
+        private readonly List<ChatMessage> _aiHistory = new();
+        private string _lastAiReply = string.Empty;
+        private bool _aiBusy;
         private readonly DispatcherTimer _debounce;
         private readonly string _template;   // worksheet HTML head + CSS
         private string _lastHtml = string.Empty;
         private string? _currentFile;
+        private readonly string[] _previewFiles;
+        private int _previewSlot;
         private bool _ready;
         private bool _dirty;
         private bool _snippetsMenuMarkdown;
@@ -80,9 +90,14 @@ namespace Calcpad.Avalonia
             _filePanel = this.FindControl<Border>("FilePanel")!;
             _fileTree = this.FindControl<TreeView>("FileTree")!;
             _optionsBar = this.FindControl<Border>("OptionsBar")!;
+            _aiPanel = this.FindControl<Border>("AiPanel")!;
             _fileTree.DoubleTapped += (_, _) => OpenSelectedFile();
+            BuildAiPanel();
 
             _template = LoadTemplate();
+            var previewDir = Path.Combine(Path.GetTempPath(), "CalcpadAvalonia");
+            Directory.CreateDirectory(previewDir);
+            _previewFiles = new[] { Path.Combine(previewDir, "preview-a.html"), Path.Combine(previewDir, "preview-b.html") };
             LoadHighlighting();
             BuildKeypad();
             BuildFormatBar();
@@ -107,7 +122,7 @@ namespace Calcpad.Avalonia
             UpdateTitle();
 
             // The embedded Chromium browser initializes asynchronously; first render once shown.
-            Loaded += (_, _) => { _ready = true; LoadStartupFileOrSample(); };
+            Loaded += (_, _) => { _ready = true; RestoreLastFolder(); LoadStartupFileOrSample(); };
         }
 
         // Opens a .cpd passed on the command line (file association / "open with"), else keeps
@@ -288,6 +303,105 @@ namespace Calcpad.Avalonia
         private void ToggleFiles_Click(object? sender, RoutedEventArgs e)
             => _filePanel.IsVisible = !_filePanel.IsVisible;
 
+        private void ToggleAi_Click(object? sender, RoutedEventArgs e)
+            => _aiPanel.IsVisible = !_aiPanel.IsVisible;
+
+        // ---- AI assistant (Anthropic streaming chat) ----
+
+        private void BuildAiPanel()
+        {
+            var root = new DockPanel();
+
+            var header = new TextBlock { Text = "AI Assistant", FontWeight = FontWeight.SemiBold, Margin = new global::Avalonia.Thickness(0, 0, 0, 6) };
+            DockPanel.SetDock(header, Dock.Top);
+            root.Children.Add(header);
+
+            _aiKey = new TextBox
+            {
+                Watermark = "ANTHROPIC_API_KEY",
+                PasswordChar = '•',
+                Text = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY") ?? string.Empty,
+                Margin = new global::Avalonia.Thickness(0, 0, 0, 6)
+            };
+            DockPanel.SetDock(_aiKey, Dock.Top);
+            root.Children.Add(_aiKey);
+
+            // Input + buttons at the bottom.
+            var bottom = new StackPanel { Orientation = Orientation.Vertical, Spacing = 4 };
+            DockPanel.SetDock(bottom, Dock.Bottom);
+            _aiInput = new TextBox { Watermark = "Ask about your worksheet…", AcceptsReturn = true, MinHeight = 60, TextWrapping = global::Avalonia.Media.TextWrapping.Wrap };
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            var send = new Button { Content = "Send" };
+            send.Click += (_, _) => AiSend();
+            var insert = new Button { Content = "Insert reply" };
+            insert.Click += (_, _) => { if (!string.IsNullOrEmpty(_lastAiReply)) InsertAtCaret(_lastAiReply); };
+            var clear = new Button { Content = "Clear" };
+            clear.Click += (_, _) => { _aiHistory.Clear(); if (_aiLog is not null) _aiLog.Text = string.Empty; };
+            buttons.Children.Add(send);
+            buttons.Children.Add(insert);
+            buttons.Children.Add(clear);
+            bottom.Children.Add(_aiInput);
+            bottom.Children.Add(buttons);
+            root.Children.Add(bottom);
+
+            // Conversation log fills the middle (last child), with its own scrollbar.
+            _aiLog = new TextBox
+            {
+                IsReadOnly = true,
+                AcceptsReturn = true,
+                TextWrapping = global::Avalonia.Media.TextWrapping.Wrap,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                Margin = new global::Avalonia.Thickness(0, 6, 0, 6),
+                FontSize = 12
+            };
+            ScrollViewer.SetVerticalScrollBarVisibility(_aiLog, ScrollBarVisibility.Auto);
+            root.Children.Add(_aiLog);
+
+            _aiPanel.Child = root;
+        }
+
+        private async void AiSend()
+        {
+            if (_aiBusy || _aiInput is null || _aiLog is null || _aiKey is null) return;
+            var prompt = _aiInput.Text?.Trim();
+            if (string.IsNullOrEmpty(prompt)) return;
+            var key = _aiKey.Text?.Trim();
+            if (string.IsNullOrEmpty(key)) { AppendAi("⚠ Set your Anthropic API key (or the ANTHROPIC_API_KEY env var).\n"); return; }
+
+            _aiBusy = true;
+            _aiInput.Text = string.Empty;
+            AppendAi($"You: {prompt}\n");
+
+            // Give the assistant the current worksheet as context.
+            var userText = $"Current worksheet:\n```\n{_editor.Text}\n```\n\n{prompt}";
+            _aiHistory.Add(ChatMessage.FromUser(userText));
+
+            AppendAi("\nAI: ");
+            var sb = new StringBuilder();
+            try
+            {
+                var client = new AnthropicAiClient(new AiOptions { ApiKey = key, SystemPrompt = CalcpadSystemPrompt.Default });
+                await foreach (var token in client.StreamReplyAsync(_aiHistory))
+                {
+                    sb.Append(token);
+                    AppendAi(token);
+                }
+            }
+            catch (Exception ex) { AppendAi($"\n[error: {ex.Message}]"); }
+
+            _lastAiReply = sb.ToString();
+            _aiHistory.Add(ChatMessage.FromAssistant(_lastAiReply));
+            AppendAi("\n\n");
+            _aiBusy = false;
+        }
+
+        private void AppendAi(string text)
+        {
+            if (_aiLog is null) return;
+            _aiLog.Text += text;
+            _aiLog.CaretIndex = _aiLog.Text?.Length ?? 0; // keep the latest visible
+        }
+
         // ---- File browser ----
 
         private async void OpenFolder_Click(object? sender, RoutedEventArgs e)
@@ -301,16 +415,55 @@ namespace Calcpad.Avalonia
                 });
                 if (folders.Count == 0) return;
                 var dir = folders[0].Path.LocalPath;
-                _fileTree.ItemsSource = null;
-                _fileTree.Items.Clear();
-                var root = BuildFileNode(new DirectoryInfo(dir));
-                if (root is not null)
-                {
-                    root.IsExpanded = true;
-                    _fileTree.Items.Add(root);
-                }
+                if (LoadFolder(dir))
+                    SaveLastFolder(dir); // remember it for next launch
             }
             catch (Exception ex) { _status.Text = "Folder failed: " + ex.Message; }
+        }
+
+        private bool LoadFolder(string dir)
+        {
+            if (!Directory.Exists(dir)) return false;
+            _fileTree.ItemsSource = null;
+            _fileTree.Items.Clear();
+            var root = BuildFileNode(new DirectoryInfo(dir));
+            if (root is null) return false;
+            root.IsExpanded = true;
+            _fileTree.Items.Add(root);
+            return true;
+        }
+
+        // ---- Persisted app state (last folder) ----
+
+        private static string StateFile => Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "CalcpadAvalonia", "state.json");
+
+        private void SaveLastFolder(string dir)
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(StateFile)!);
+                File.WriteAllText(StateFile, JsonSerializer.Serialize(new AppState { LastFolder = dir }));
+            }
+            catch { /* best effort */ }
+        }
+
+        private void RestoreLastFolder()
+        {
+            try
+            {
+                if (!File.Exists(StateFile)) return;
+                var state = JsonSerializer.Deserialize<AppState>(File.ReadAllText(StateFile));
+                if (state?.LastFolder is string dir && Directory.Exists(dir))
+                    LoadFolder(dir);
+            }
+            catch { /* ignore a corrupt state file */ }
+        }
+
+        private sealed class AppState
+        {
+            public string? LastFolder { get; set; }
         }
 
         // Builds a TreeViewItem for a directory: sub-folders first, then *.cpd files.
@@ -515,7 +668,15 @@ namespace Calcpad.Avalonia
                 var sw = Stopwatch.StartNew();
                 _lastHtml = RenderHtml(_editor.Text ?? string.Empty);
                 sw.Stop();
-                _webView.LoadHtml(BuildPage(_lastHtml));
+
+                // Write to a toggled file and navigate to it so the page has a file:// origin:
+                // this lets relative <img src="./…"> in the worksheet resolve (via the base href)
+                // and load, which an about:/data: LoadHtml page cannot do.
+                _previewSlot ^= 1;
+                var path = _previewFiles[_previewSlot];
+                File.WriteAllText(path, BuildPage(_lastHtml), new UTF8Encoding(false));
+                _webView.LoadUrl(new Uri(path).AbsoluteUri);
+
                 _status.Text = $"{(_currentFile is null ? "untitled" : Path.GetFileName(_currentFile))} · rendered in {sw.ElapsedMilliseconds} ms";
             }
             catch (Exception ex)
@@ -621,8 +782,21 @@ namespace Calcpad.Avalonia
 
         private string BuildPage(string bodyHtml)
         {
-            var page = new StringBuilder(_template.Length + bodyHtml.Length + 32);
-            page.Append(_template);
+            // Resolve the worksheet's relative image/resource paths against its own folder.
+            var template = _template;
+            var dir = _currentFile is null ? null : Path.GetDirectoryName(_currentFile);
+            if (!string.IsNullOrEmpty(dir))
+            {
+                var baseHref = new Uri(dir.EndsWith(Path.DirectorySeparatorChar) ? dir : dir + Path.DirectorySeparatorChar).AbsoluteUri;
+                var baseTag = $"<base href=\"{baseHref}\">";
+                var headIdx = template.IndexOf("<head>", StringComparison.OrdinalIgnoreCase);
+                template = headIdx >= 0
+                    ? template.Insert(headIdx + "<head>".Length, "\n    " + baseTag)
+                    : baseTag + template;
+            }
+
+            var page = new StringBuilder(template.Length + bodyHtml.Length + 32);
+            page.Append(template);
             page.Append(bodyHtml);
             page.Append(" </body></html>");
             return page.ToString();

@@ -30,11 +30,8 @@
   <ItemGroup>
     <ProjectReference Include="..\Calcpad.Core\Calcpad.Core.csproj" />
     <ProjectReference Include="..\Calcpad.OpenXml\Calcpad.OpenXml.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- Share the single snippet catalogue with the WPF app / AI assistant (no Anthropic dep). -->
-    <Compile Include="..\Calcpad.AI\CalcpadSnippets.cs" Link="Shared\CalcpadSnippets.cs" />
+    <!-- AI assistant backend (Anthropic streaming chat). Brings CalcpadSnippets too. -->
+    <ProjectReference Include="..\Calcpad.AI\Calcpad.AI.csproj" />
   </ItemGroup>
 
   <ItemGroup>
