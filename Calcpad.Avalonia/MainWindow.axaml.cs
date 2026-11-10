@@ -2646,11 +2646,21 @@ namespace Calcpad.Avalonia
                     Title = "Save Calcpad worksheet",
                     DefaultExtension = "cpd",
                     SuggestedFileName = _currentFile is null ? "worksheet.cpd" : Path.GetFileName(_currentFile),
-                    FileTypeChoices = new[] { new FilePickerFileType("Calcpad") { Patterns = new[] { "*.cpd" } } }
+                    FileTypeChoices = new[]
+                    {
+                        new FilePickerFileType("Calcpad") { Patterns = new[] { "*.cpd" } },
+                        new FilePickerFileType("Calcpad package") { Patterns = new[] { "*.cpdz" } }
+                    }
                 });
                 if (file is null) return;
-                var oldDir = _currentFile is null ? null : Path.GetDirectoryName(_currentFile);
                 var newPath = file.Path.LocalPath;
+                // Chose the package format (or typed a .cpdz name) → save a self-contained package.
+                if (string.Equals(Path.GetExtension(newPath), ".cpdz", StringComparison.OrdinalIgnoreCase))
+                {
+                    await SaveAsPackageTo(newPath);
+                    return;
+                }
+                var oldDir = _currentFile is null ? null : Path.GetDirectoryName(_currentFile);
                 await SaveTo(newPath);
                 await MaybeCopyReferencesLocally(oldDir, Path.GetDirectoryName(newPath));
             }
@@ -2699,16 +2709,22 @@ namespace Calcpad.Avalonia
                     FileTypeChoices = new[] { new FilePickerFileType("Calcpad package") { Patterns = new[] { "*.cpdz" } } }
                 });
                 if (file is null) return;
-                var dest = file.Path.LocalPath;
-                var mainDir = string.IsNullOrEmpty(_currentFile) ? Environment.CurrentDirectory : (Path.GetDirectoryName(_currentFile) ?? Environment.CurrentDirectory);
-                SetWorkingDirToWorksheet();
-                var (tmplLocal, tmplName) = await ResolvePackageTemplateAsync();
-                CpdPackage.Save(_editor.Text ?? string.Empty, mainDir, BuildConfigJson(tmplName), dest,
-                    templateLocalPath: tmplLocal, templateEntryName: tmplName);
-                _status.Text = "Saved package " + Path.GetFileName(dest) + (tmplName is null ? "" : " (+ template)");
-                OpenPackage(dest); // switch into package mode so later saves update it
+                await SaveAsPackageTo(file.Path.LocalPath);
             }
             catch (Exception ex) { _status.Text = "Save package failed: " + ex.Message; }
+        }
+
+        // Writes the current worksheet (+ images, libraries, config, optional template) to a .cpdz
+        // and switches into package mode so subsequent Save updates it in place.
+        private async System.Threading.Tasks.Task SaveAsPackageTo(string dest)
+        {
+            var mainDir = string.IsNullOrEmpty(_currentFile) ? Environment.CurrentDirectory : (Path.GetDirectoryName(_currentFile) ?? Environment.CurrentDirectory);
+            SetWorkingDirToWorksheet();
+            var (tmplLocal, tmplName) = await ResolvePackageTemplateAsync();
+            CpdPackage.Save(_editor.Text ?? string.Empty, mainDir, BuildConfigJson(tmplName), dest,
+                templateLocalPath: tmplLocal, templateEntryName: tmplName);
+            _status.Text = "Saved package " + Path.GetFileName(dest) + (tmplName is null ? "" : " (+ template)");
+            OpenPackage(dest); // switch into package mode so later saves update it
         }
 
         // Re-zips the open package from the current editor text, re-collecting any newly referenced
