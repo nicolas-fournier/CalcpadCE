@@ -52,6 +52,9 @@ namespace Calcpad.Avalonia
         private readonly Border _filePanel;
         private readonly TreeView _fileTree;
         private readonly Border _optionsBar;
+        private readonly ToggleButton _filesToggle;
+        private readonly ToggleButton _keypadToggle;
+        private readonly ToggleButton _aiToggle;
         private readonly Border _aiPanel;
         private TextBox? _aiKey;
         private TextBox? _aiLog;
@@ -103,6 +106,9 @@ namespace Calcpad.Avalonia
             _filePanel = this.FindControl<Border>("FilePanel")!;
             _fileTree = this.FindControl<TreeView>("FileTree")!;
             _optionsBar = this.FindControl<Border>("OptionsBar")!;
+            _filesToggle = this.FindControl<ToggleButton>("FilesToggle")!;
+            _keypadToggle = this.FindControl<ToggleButton>("KeypadToggle")!;
+            _aiToggle = this.FindControl<ToggleButton>("AiToggle")!;
             _aiPanel = this.FindControl<Border>("AiPanel")!;
             _fileTree.DoubleTapped += (_, _) => OpenSelectedFile();
             BuildAiPanel();
@@ -708,14 +714,21 @@ namespace Calcpad.Avalonia
             return b;
         }
 
+        // Toolbar toggle buttons drive panel visibility; the View menu items flip the buttons.
+        // (Guarded: IsCheckedChanged can fire during XAML load, before the fields are assigned.)
+        private void FilesToggle_Changed(object? sender, RoutedEventArgs e)
+        { if (_filePanel is not null && sender is ToggleButton t) _filePanel.IsVisible = t.IsChecked == true; }
+        private void KeypadToggle_Changed(object? sender, RoutedEventArgs e)
+        { if (_keypadHost is not null && sender is ToggleButton t) _keypadHost.IsVisible = t.IsChecked == true; }
+        private void AiToggle_Changed(object? sender, RoutedEventArgs e)
+        { if (_aiPanel is not null && sender is ToggleButton t) _aiPanel.IsVisible = t.IsChecked == true; }
+
         private void ToggleKeypad_Click(object? sender, RoutedEventArgs e)
-            => _keypadHost.IsVisible = !_keypadHost.IsVisible;
-
+            => _keypadToggle.IsChecked = !(_keypadToggle.IsChecked == true);
         private void ToggleFiles_Click(object? sender, RoutedEventArgs e)
-            => _filePanel.IsVisible = !_filePanel.IsVisible;
-
+            => _filesToggle.IsChecked = !(_filesToggle.IsChecked == true);
         private void ToggleAi_Click(object? sender, RoutedEventArgs e)
-            => _aiPanel.IsVisible = !_aiPanel.IsVisible;
+            => _aiToggle.IsChecked = !(_aiToggle.IsChecked == true);
 
         private void ToggleCompletion_Click(object? sender, RoutedEventArgs e)
         {
