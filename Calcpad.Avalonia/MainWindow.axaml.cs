@@ -1428,8 +1428,21 @@ namespace Calcpad.Avalonia
             if (_tableSyncing || !_tableActive || _switching) return;
             var focused = global::Avalonia.Controls.TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() as global::Avalonia.Visual;
             if (focused is not null && global::Avalonia.VisualTree.VisualExtensions.IsVisualAncestorOf(_tableOverlay, focused)) return; // grid is the source
-            var info = DetectTableAtCaret();
-            if (info is { } t) OpenBoundTable(t); else CloseTableEditor();
+            var info = DetectTableAtLine(_tableStartLine);     // re-read the bound table from its own line
+            if (info is not { } t) { CloseTableEditor(); return; }
+            _tableStartLine = t.start; _tableEndLine = t.end; _tableMarkdown = t.md; _tableName = t.name;
+            _tableData.Clear();
+            foreach (var r in t.data) _tableData.Add(new System.Collections.Generic.List<string>(r));
+            RenderTableGrid();                                 // refresh cells in place (keep the panel)
+        }
+
+        private (int start, int end, bool md, string name, System.Collections.Generic.List<System.Collections.Generic.List<string>> data)? DetectTableAtLine(int lineNumber)
+        {
+            if (lineNumber < 1 || lineNumber > _editor.Document.LineCount) return null;
+            var data = new System.Collections.Generic.List<System.Collections.Generic.List<string>>();
+            var name = SeedTableFrom(_editor.Document.GetLineByNumber(lineNumber), data);
+            if (_tableSeedStart < 1) return null;
+            return (_tableSeedStart, _tableSeedEnd, _tableSeedMarkdown, name ?? "A", data);
         }
 
         private (int start, int end, bool md, string name, System.Collections.Generic.List<System.Collections.Generic.List<string>> data)? DetectTableAtCaret()
@@ -1469,14 +1482,15 @@ namespace Calcpad.Avalonia
 
         private void BuildTablePanel(bool bound)
         {
+            _tableBuilding = true; // suppress commits from initial control events during construction
             var nameBox = new TextBox { Text = _tableName, Width = 90 };
-            nameBox.TextChanged += (_, _) => { _tableName = string.IsNullOrWhiteSpace(nameBox.Text) ? "A" : nameBox.Text.Trim(); if (_tableActive) CommitTableToDocument(); };
+            nameBox.TextChanged += (_, _) => { if (_tableBuilding) return; _tableName = string.IsNullOrWhiteSpace(nameBox.Text) ? "A" : nameBox.Text.Trim(); if (_tableActive) CommitTableToDocument(); };
 
             var fmt = new ComboBox { Width = 200, VerticalAlignment = VerticalAlignment.Center };
             fmt.Items.Add(new ComboBoxItem { Content = "Calcpad matrix  [a;b|c;d]" });
             fmt.Items.Add(new ComboBoxItem { Content = "Markdown table" });
             fmt.SelectedIndex = _tableMarkdown ? 1 : 0;
-            fmt.SelectionChanged += (_, _) => { _tableMarkdown = fmt.SelectedIndex == 1; if (_tableActive) CommitTableToDocument(); };
+            fmt.SelectionChanged += (_, _) => { if (_tableBuilding) return; _tableMarkdown = fmt.SelectedIndex == 1; if (_tableActive) CommitTableToDocument(); };
 
             _tableGridHost = new Border();
             RenderTableGrid();
@@ -1521,11 +1535,13 @@ namespace Calcpad.Avalonia
             panel.Children.Add(_tableGridHost);
             panel.Children.Add(row2);
             _tableOverlay.Child = panel;
+            _tableBuilding = false;
         }
 
         private void RenderTableGrid()
         {
             if (_tableGridHost is null) return;
+            var wasBuilding = _tableBuilding;
             _tableBuilding = true; // programmatic cell Text changes below must not commit
             _tableCells.Clear();
             var g = new Grid();
@@ -1558,7 +1574,7 @@ namespace Calcpad.Avalonia
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto
             };
-            _tableBuilding = false;
+            _tableBuilding = wasBuilding; // restore (nested inside BuildTablePanel keeps it true)
         }
 
         private void SyncCells()
@@ -1606,7 +1622,7 @@ namespace Calcpad.Avalonia
         // the caret/document handlers (which would rebuild the grid and steal focus mid-edit).
         private void CommitTableToDocument()
         {
-            if (!_tableActive || _tableStartLine < 1) return;
+            if (!_tableActive || _tableSyncing || _tableBuilding || _tableStartLine < 1) return;
             SyncCells();
             var doc = _editor.Document;
             if (_tableStartLine > doc.LineCount || _tableEndLine > doc.LineCount) return;
@@ -1648,11 +1664,13 @@ namespace Calcpad.Avalonia
         // or a markdown table block (contiguous lines starting with '|'). Records the line range so it
         // can be replaced. Returns the matrix name (null for a markdown table or no table).
         private string? TrySeedTableFromLine(System.Collections.Generic.List<System.Collections.Generic.List<string>> data)
+            => SeedTableFrom(_editor.Document.GetLineByOffset(_editor.CaretOffset), data);
+
+        private string? SeedTableFrom(AvaloniaEdit.Document.DocumentLine line, System.Collections.Generic.List<System.Collections.Generic.List<string>> data)
         {
             _tableSeedStart = _tableSeedEnd = -1;
             _tableSeedMarkdown = false;
             var doc = _editor.Document;
-            var line = doc.GetLineByOffset(_editor.CaretOffset);
             var text = doc.GetText(line.Offset, line.Length);
 
             var m = System.Text.RegularExpressions.Regex.Match(text, @"^\s*([A-Za-z_]\w*)\s*:?=\s*\[(.+)\]\s*$");
