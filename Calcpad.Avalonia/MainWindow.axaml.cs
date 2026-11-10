@@ -1386,7 +1386,7 @@ namespace Calcpad.Avalonia
 
         // ---- Docked table editor: follows the caret onto a table, two-way bound, Excel-like nav ----
 
-        private bool _tableActive, _tableInsertMode, _tableSyncing, _tableMarkdown;
+        private bool _tableActive, _tableInsertMode, _tableSyncing, _tableMarkdown, _tableBuilding;
         private int _tableStartLine = -1, _tableEndLine = -1;
         private string _tableName = "A";
         private Border _tableGridHost = null!;
@@ -1526,6 +1526,7 @@ namespace Calcpad.Avalonia
         private void RenderTableGrid()
         {
             if (_tableGridHost is null) return;
+            _tableBuilding = true; // programmatic cell Text changes below must not commit
             _tableCells.Clear();
             var g = new Grid();
             var cols = _tableData.Count == 0 ? 0 : _tableData.Max(r => r.Count);
@@ -1538,7 +1539,13 @@ namespace Calcpad.Avalonia
                 {
                     int rr = r, cc = c;
                     var tb = new TextBox { Text = _tableData[r][c], MinWidth = 54, Height = 22, MinHeight = 0, Margin = new global::Avalonia.Thickness(1), Padding = new global::Avalonia.Thickness(3, 1) };
-                    tb.LostFocus += (_, _) => { if (rr < _tableData.Count && cc < _tableData[rr].Count) { _tableData[rr][cc] = tb.Text ?? ""; if (_tableActive) CommitTableToDocument(); } };
+                    // Live two-way: every keystroke writes the table back to the document.
+                    tb.TextChanged += (_, _) =>
+                    {
+                        if (_tableBuilding || _tableSyncing) return;
+                        if (rr < _tableData.Count && cc < _tableData[rr].Count) _tableData[rr][cc] = tb.Text ?? "";
+                        if (_tableActive) CommitTableToDocument();
+                    };
                     tb.KeyDown += (_, e) => OnCellKey(e, rr, cc);
                     Grid.SetRow(tb, r); Grid.SetColumn(tb, c);
                     g.Children.Add(tb); rowList.Add(tb);
@@ -1551,6 +1558,7 @@ namespace Calcpad.Avalonia
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto
             };
+            _tableBuilding = false;
         }
 
         private void SyncCells()
