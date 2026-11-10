@@ -60,7 +60,8 @@
         <MenuItem Header="Show _help" Click="ShowHelp_Click"/>
       </MenuItem>
       <MenuItem Header="_Help">
-        <MenuItem Header="_Quick reference" Click="ShowHelp_Click"/>
+        <MenuItem Header="_Features &amp; shortcuts" Click="ShowAppHelp_Click"/>
+        <MenuItem Header="_Quick reference (language)" Click="ShowHelp_Click"/>
       </MenuItem>
     </Menu>
 

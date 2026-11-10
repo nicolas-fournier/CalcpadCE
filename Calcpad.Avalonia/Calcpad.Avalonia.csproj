@@ -47,6 +47,10 @@
     <Content Include="..\Calcpad.Wpf\doc\help.html" Link="Assets\help.html">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!-- Avalonia app feature/shortcut guide. -->
+    <Content Include="Assets\app-help.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>

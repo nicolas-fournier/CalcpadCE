@@ -1338,7 +1338,9 @@ namespace Calcpad.Avalonia
             foreach (var snippet in CalcpadSnippets.ForMode(_snippetsMenuMarkdown))
             {
                 var body = snippet.Body;
-                var item = new MenuItem { Header = snippet.Title };
+                // Show the autocomplete trigger key next to the title; preview the body on hover.
+                var item = new MenuItem { Header = $"{snippet.Title}   ({snippet.Key})" };
+                ToolTip.SetTip(item, body);
                 item.Click += (_, _) => InsertAtCaret(body);
                 _snippetsMenu.Items.Add(item);
             }
@@ -1376,16 +1378,21 @@ namespace Calcpad.Avalonia
 
         private void Run_Click(object? sender, RoutedEventArgs e) => Render();
 
-        // Loads the quick-reference help page into the preview pane.
-        private void ShowHelp_Click(object? sender, RoutedEventArgs e)
+        // Loads the quick-reference (Calcpad language) help page into the preview pane.
+        private void ShowHelp_Click(object? sender, RoutedEventArgs e) => ShowHelpPage("help.html", "Quick reference");
+
+        // Loads the Avalonia app feature/shortcut guide into the preview pane.
+        private void ShowAppHelp_Click(object? sender, RoutedEventArgs e) => ShowHelpPage("app-help.html", "Features & shortcuts");
+
+        private void ShowHelpPage(string file, string label)
         {
             try
             {
-                var path = Path.Combine(AppContext.BaseDirectory, "Assets", "help.html");
+                var path = Path.Combine(AppContext.BaseDirectory, "Assets", file);
                 if (File.Exists(path))
                 {
                     _webView.LoadHtml(File.ReadAllText(path));
-                    _status.Text = "Quick reference — View ▸ Show preview to return";
+                    _status.Text = $"{label} — press Run (F5) to return to the preview";
                 }
                 else _status.Text = "Help page not found";
             }

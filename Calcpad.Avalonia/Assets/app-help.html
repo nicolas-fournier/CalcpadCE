@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CalcpadCE (Avalonia) — Features & Shortcuts</title>
+<style>
+  body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11pt; color: #1b2330;
+         margin: 0 auto; max-width: 820px; padding: 18px 26px; line-height: 1.5; }
+  h1 { font-size: 1.7em; margin: 0 0 2px; }
+  .sub { color: #6b7280; margin: 0 0 18px; }
+  h2 { font-size: 1.15em; margin: 22px 0 6px; padding-bottom: 3px; border-bottom: 1px solid #e2e4e8; }
+  table { border-collapse: collapse; width: 100%; margin: 6px 0 2px; }
+  td { padding: 4px 8px; vertical-align: top; border-bottom: 1px solid #f0f1f3; }
+  td.k { white-space: nowrap; width: 210px; }
+  kbd { background: #f3f4f6; border: 1px solid #d1d5db; border-bottom-width: 2px;
+        border-radius: 4px; padding: 1px 6px; font-family: 'Cascadia Code', Consolas, monospace; font-size: 0.9em; }
+  code { background: #f3f4f6; border-radius: 3px; padding: 1px 5px;
+         font-family: 'Cascadia Code', Consolas, monospace; }
+  .f { color: #16a34a; font-weight: bold; } .h { color: #b2379b; font-weight: bold; }
+  .var { color: #c2410c; font-weight: bold; } .unit { color: #16a34a; }
+  .note { background: #f8fafc; border-left: 3px solid #2f6fed; padding: 8px 12px; margin: 10px 0; border-radius: 3px; }
+</style>
+</head>
+<body>
+<h1>CalcpadCE — Avalonia edition</h1>
+<p class="sub">Cross-platform desktop app · features &amp; keyboard shortcuts</p>
+
+<div class="note">
+  New documents start in <b>markdown-first</b> mode (<code>#md full</code>): <b>prose is the default</b>,
+  and a line is a <b>calculation</b> only when it is an assignment (<code>:=</code>) or delimited math
+  (<code>$…$</code>, <code>$$…$$</code>). The gutter shows <span class="f">ƒ</span> on calc lines,
+  <span class="h">#</span> on headings, and nothing on prose.
+</div>
+
+<h2>Calculation vs prose — one gesture</h2>
+<table>
+  <tr><td class="k"><kbd>Ctrl</kbd>+<kbd>=</kbd> · <b>↔ Calc</b></td>
+      <td>Toggle the line (or selection) between prose and a calculation. Picks the lightest delimiter for you:
+          an assignment <code>L = 6*m</code> becomes <code>L := 6*m</code>; a bare expression <code>q*L^2/8</code>
+          becomes <code>$q*L^2/8$</code>; a calc line toggles back to prose.</td></tr>
+  <tr><td class="k">Click a gutter badge</td><td>Click the <span class="f">ƒ</span> / blank badge to flip that line calc↔prose.</td></tr>
+  <tr><td class="k">Double-click a line number</td><td>Same toggle, from the line-number margin.</td></tr>
+  <tr><td class="k">Type <code>=</code> / <code>*</code> / <code>+</code> / <code>-</code></td>
+      <td>On a prose line with an operand, proposes converting the line to a calculation.</td></tr>
+  <tr><td class="k"><b>Auto-calc</b> option</td>
+      <td>When on (options bar), typing <code>name =</code> auto-upgrades the line to <code>name := </code>
+          (reversible with <kbd>Ctrl</kbd>+<kbd>Z</kbd>).</td></tr>
+</table>
+
+<h2>Editor</h2>
+<table>
+  <tr><td class="k">Autocomplete</td>
+      <td>Type to get suggestions, colour-coded: <span class="var">your variables</span> (first),
+          <span class="unit">units</span>, <span style="color:#1f7fae;font-weight:bold">functions</span>,
+          <span style="color:#7c3aed;font-weight:bold">snippets</span>, directives. Accept with
+          <kbd>Tab</kbd> or <kbd>Enter</kbd>. Toggle it in View ▸ Toggle autocomplete.</td></tr>
+  <tr><td class="k">Hover</td><td>Hover a unit, function, constant, or a symbol you defined to see its description / comment.</td></tr>
+  <tr><td class="k"><kbd>F12</kbd></td><td>Go to the definition of the variable/function under the caret.</td></tr>
+  <tr><td class="k">Right-click</td><td>Context menu: Cut/Copy/Paste, ↔ Calc, Go to definition, Insert function, Undo/Redo.</td></tr>
+  <tr><td class="k">Syntax colours</td>
+      <td><span class="var">variables</span> · <span class="unit">units</span> ·
+          <span style="color:#1f7fae">functions</span> · <span class="h">keywords</span> ·
+          <span style="color:#475569">numbers</span>.</td></tr>
+</table>
+
+<h2>File shortcuts</h2>
+<table>
+  <tr><td class="k"><kbd>Ctrl</kbd>+<kbd>N</kbd> / <kbd>O</kbd> / <kbd>S</kbd> / <kbd>Shift</kbd>+<kbd>S</kbd></td>
+      <td>New · Open · Save · Save As. Open files appear as <b>tabs</b>.</td></tr>
+  <tr><td class="k"><kbd>F5</kbd></td><td>Recalculate &amp; show the preview.</td></tr>
+  <tr><td class="k">File ▸ Export</td><td>HTML, Word (.docx), or Print/PDF (via the browser).</td></tr>
+</table>
+
+<h2>Panels (toolbar toggles)</h2>
+<table>
+  <tr><td class="k"><b>Files</b></td><td>Browse a folder of worksheets; each <code>.cpd</code> expands into its functions.
+      <b>Insert</b> adds <code>#include</code> for a file or a call for a function (relative paths when the option is on).</td></tr>
+  <tr><td class="k"><b>Keypad</b></td><td>Numbers, operators, functions and Greek letters. <code>=</code> inserts <code>:=</code> in markdown mode.</td></tr>
+  <tr><td class="k"><b>AI</b></td><td>Streaming assistant with agent mode, image/PDF attachments and persistent memory.
+      Set <code>ANTHROPIC_API_KEY</code> or paste a key.</td></tr>
+</table>
+
+<h2>Snippets &amp; formatting</h2>
+<p>The <b>Snippets</b> menu (and autocomplete) are mode-aware — markdown vs classic. Each item shows its
+trigger key. The formatting toolbar adds headings, bold/italic, lists, tables, inline/block math, and ↔ Calc.
+Compute snippets: <code>plot</code>, <code>vector</code>, <code>repeat</code>, <code>def</code>, <code>convert</code>, <code>beam</code>.</p>
+
+<h2>Options bar</h2>
+<p>Substitute · Format equations · Complex · Adaptive plots · Embed images · Relative paths · Auto-calc ·
+Angles (Deg/Rad/Grad) · Units · Palette. Decimals are set in the top toolbar.</p>
+
+<p class="sub" style="margin-top:22px">View ▸ Quick reference opens the full Calcpad language reference.</p>
+</body>
+</html>
