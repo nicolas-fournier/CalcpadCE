@@ -353,6 +353,9 @@ namespace Calcpad.Avalonia
                 StartOffset = start,
                 CloseWhenCaretAtBeginning = true
             };
+            // Enable substring matching so a unit/function is also found by words in its description
+            // (e.g. typing "celsius" matches the "… Celsius …" text of the °C entry).
+            w.CompletionList.IsFiltering = true;
             foreach (var it in items) w.CompletionList.CompletionData.Add(it);
             w.Closed += (_, _) => _completion = null;
             _completion = w;
@@ -431,6 +434,13 @@ namespace Calcpad.Avalonia
             w.Show();
         }
 
+        // Typed word → unit symbol it inserts (symbols that are awkward to type directly).
+        private static readonly (string alias, string token)[] UnitAliases =
+        {
+            ("celsius", "°C"), ("fahrenheit", "°F"), ("kelvin", "K"), ("rankine", "°R"),
+            ("degree", "°"), ("ohm", "Ω"), ("micro", "µ"), ("delta", "Δ"),
+        };
+
         private System.Collections.Generic.List<CompletionData> BuildCompletionItems(bool directives)
         {
             var list = new System.Collections.Generic.List<CompletionData>();
@@ -467,6 +477,12 @@ namespace Calcpad.Avalonia
                 list.Add(new CompletionData($"{fn} {d}", insert: fn + "(", priority: 30,
                     description: d, content: fn + "  —  function", colorHex: ColFunc));
             }
+
+            // Named aliases for hard-to-type unit symbols: typing the word (prefix match) inserts the
+            // symbol, e.g. "celsius" → °C, "ohm" → Ω. Reliable even without substring matching.
+            foreach (var (alias, token) in UnitAliases)
+                list.Add(new CompletionData(alias, insert: token, priority: 45,
+                    description: $"inserts {token}", content: $"{alias}  —  inserts {token}", colorHex: ColUnit));
 
             // Mode-aware snippets (purple). Priority above units/functions so a snippet wins its
             // own exact trigger on Tab (e.g. 'var' snippet beats the 'VAR' volt-amp-reactive unit).
@@ -908,21 +924,16 @@ namespace Calcpad.Avalonia
             DockPanel.SetDock(_aiKey, Dock.Top);
             root.Children.Add(_aiKey);
 
-            // Mode row: agent toggle + attach.
+            // Mode row (top): just the agent toggle. Attach lives with the composer at the bottom.
             var modeRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new global::Avalonia.Thickness(0, 0, 0, 4) };
             DockPanel.SetDock(modeRow, Dock.Top);
             var agent = new CheckBox { Content = "Agent mode", IsChecked = _agentMode, VerticalAlignment = VerticalAlignment.Center };
             agent.IsCheckedChanged += (_, _) => _agentMode = agent.IsChecked == true;
             ToolTip.SetTip(agent, "Let the assistant read, evaluate and insert into the worksheet via tools");
-            var attach = new Button { Content = "Attach…" };
-            attach.Click += (_, _) => AiAttach();
-            _aiAttachInfo = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Foreground = new SolidColorBrush(Color.Parse("#6B7280")), FontSize = 11 };
             modeRow.Children.Add(agent);
-            modeRow.Children.Add(attach);
-            modeRow.Children.Add(_aiAttachInfo);
             root.Children.Add(modeRow);
 
-            // Input + buttons at the bottom.
+            // Input + buttons at the bottom (composer). Attach sits here, next to Send.
             var bottom = new StackPanel { Orientation = Orientation.Vertical, Spacing = 4 };
             DockPanel.SetDock(bottom, Dock.Bottom);
             _aiInput = new TextBox { Watermark = "Ask about your worksheet…", AcceptsReturn = true, MinHeight = 60, TextWrapping = global::Avalonia.Media.TextWrapping.Wrap };
@@ -933,9 +944,14 @@ namespace Calcpad.Avalonia
             insert.Click += (_, _) => { if (!string.IsNullOrEmpty(_lastAiReply)) InsertAtCaret(_lastAiReply); };
             var clear = new Button { Content = "Clear" };
             clear.Click += (_, _) => AiClear();
+            var attach = new Button { Content = "📎 Attach…" };
+            attach.Click += (_, _) => AiAttach();
+            _aiAttachInfo = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Foreground = new SolidColorBrush(Color.Parse("#6B7280")), FontSize = 11 };
             buttons.Children.Add(send);
             buttons.Children.Add(insert);
             buttons.Children.Add(clear);
+            buttons.Children.Add(attach);
+            buttons.Children.Add(_aiAttachInfo);
             bottom.Children.Add(_aiInput);
             bottom.Children.Add(buttons);
             root.Children.Add(bottom);
