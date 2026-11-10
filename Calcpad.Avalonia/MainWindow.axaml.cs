@@ -63,6 +63,9 @@ namespace Calcpad.Avalonia
         private double _fileColWidth = 240, _aiColWidth = 340; // remembered panel widths
         private TextBox? _aiKey;
         private global::Markdown.Avalonia.MarkdownScrollViewer? _aiLog;
+        private Border? _aiProposalBar;
+        private TextBlock? _aiProposalPreview;
+        private string? _pendingProposal;
         private readonly StringBuilder _aiLogText = new();
         private bool _aiRenderQueued;
         private bool _agentTextSeen;
@@ -985,60 +988,81 @@ namespace Calcpad.Avalonia
 
         private void BuildAiPanel()
         {
+            _aiPanel.Padding = new global::Avalonia.Thickness(6); // tighter
             var root = new DockPanel();
 
-            var header = new TextBlock { Text = "AI Assistant", FontWeight = FontWeight.SemiBold, Margin = new global::Avalonia.Thickness(0, 0, 0, 6) };
-            DockPanel.SetDock(header, Dock.Top);
-            root.Children.Add(header);
+            Button Mini(string label, Action onClick)
+            {
+                var b = new Button { Content = label, FontSize = 11, MinHeight = 0, Padding = new global::Avalonia.Thickness(6, 2) };
+                b.Click += (_, _) => onClick();
+                return b;
+            }
+
+            // Compact top row: title + agent toggle together.
+            var topRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, Margin = new global::Avalonia.Thickness(0, 0, 0, 3) };
+            DockPanel.SetDock(topRow, Dock.Top);
+            topRow.Children.Add(new TextBlock { Text = "AI Assistant", FontWeight = FontWeight.SemiBold, FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
+            var agent = new CheckBox { Content = "Agent mode", IsChecked = _agentMode, FontSize = 11, MinHeight = 0, VerticalAlignment = VerticalAlignment.Center };
+            agent.IsCheckedChanged += (_, _) => _agentMode = agent.IsChecked == true;
+            ToolTip.SetTip(agent, "Let the assistant read, evaluate and propose changes to the worksheet via tools");
+            topRow.Children.Add(agent);
+            root.Children.Add(topRow);
 
             _aiKey = new TextBox
             {
                 Watermark = "ANTHROPIC_API_KEY",
                 PasswordChar = '•',
                 Text = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY") ?? string.Empty,
-                Margin = new global::Avalonia.Thickness(0, 0, 0, 6)
+                FontSize = 11, MinHeight = 0, Padding = new global::Avalonia.Thickness(4, 2),
+                Margin = new global::Avalonia.Thickness(0, 0, 0, 3)
             };
             DockPanel.SetDock(_aiKey, Dock.Top);
             root.Children.Add(_aiKey);
 
-            // Mode row (top): just the agent toggle. Attach lives with the composer at the bottom.
-            var modeRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new global::Avalonia.Thickness(0, 0, 0, 4) };
-            DockPanel.SetDock(modeRow, Dock.Top);
-            var agent = new CheckBox { Content = "Agent mode", IsChecked = _agentMode, VerticalAlignment = VerticalAlignment.Center };
-            agent.IsCheckedChanged += (_, _) => _agentMode = agent.IsChecked == true;
-            ToolTip.SetTip(agent, "Let the assistant read, evaluate and insert into the worksheet via tools");
-            modeRow.Children.Add(agent);
-            root.Children.Add(modeRow);
-
-            // Input + buttons at the bottom (composer). Attach sits here, next to Send.
-            var bottom = new StackPanel { Orientation = Orientation.Vertical, Spacing = 4 };
+            // Composer at the very bottom.
+            var bottom = new StackPanel { Orientation = Orientation.Vertical, Spacing = 3 };
             DockPanel.SetDock(bottom, Dock.Bottom);
-            _aiInput = new TextBox { Watermark = "Ask about your worksheet…", AcceptsReturn = true, MinHeight = 60, TextWrapping = global::Avalonia.Media.TextWrapping.Wrap };
-            var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-            var send = new Button { Content = "Send" };
-            send.Click += (_, _) => AiSend();
-            var insert = new Button { Content = "Insert reply" };
-            insert.Click += (_, _) => { if (!string.IsNullOrEmpty(_lastAiReply)) InsertAtCaret(_lastAiReply); };
-            var clear = new Button { Content = "Clear" };
-            clear.Click += (_, _) => AiClear();
-            var attach = new Button { Content = "📎 Attach…" };
-            attach.Click += (_, _) => AiAttach();
+            _aiInput = new TextBox { Watermark = "Ask about your worksheet…", AcceptsReturn = true, MinHeight = 46, FontSize = 11, Padding = new global::Avalonia.Thickness(4, 2), TextWrapping = global::Avalonia.Media.TextWrapping.Wrap };
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
             _aiAttachInfo = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Foreground = new SolidColorBrush(Color.Parse("#6B7280")), FontSize = 11 };
-            buttons.Children.Add(send);
-            buttons.Children.Add(insert);
-            buttons.Children.Add(clear);
-            buttons.Children.Add(attach);
+            buttons.Children.Add(Mini("Send", AiSend));
+            buttons.Children.Add(Mini("Insert reply", () => { if (!string.IsNullOrEmpty(_lastAiReply)) InsertAtCaret(_lastAiReply); }));
+            buttons.Children.Add(Mini("Clear", AiClear));
+            buttons.Children.Add(Mini("📎", AiAttach));
             buttons.Children.Add(_aiAttachInfo);
             bottom.Children.Add(_aiInput);
             bottom.Children.Add(buttons);
             root.Children.Add(bottom);
+
+            // Proposed-change bar (above the composer): the assistant proposes, the user applies.
+            _aiProposalPreview = new TextBlock { FontSize = 11, TextWrapping = global::Avalonia.Media.TextWrapping.Wrap, Foreground = new SolidColorBrush(Color.Parse("#334155")), FontFamily = new global::Avalonia.Media.FontFamily("Cascadia Code,Consolas,monospace") };
+            var propButtons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new global::Avalonia.Thickness(0, 3, 0, 0) };
+            propButtons.Children.Add(Mini("✓ Apply", ApplyProposal));
+            propButtons.Children.Add(Mini("✗ Dismiss", DismissProposal));
+            var propInner = new StackPanel { Orientation = Orientation.Vertical, Spacing = 2 };
+            propInner.Children.Add(new TextBlock { Text = "Proposed change", FontWeight = FontWeight.SemiBold, FontSize = 11, Foreground = new SolidColorBrush(Color.Parse("#92400E")) });
+            propInner.Children.Add(new ScrollViewer { Content = _aiProposalPreview, MaxHeight = 120, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
+            propInner.Children.Add(propButtons);
+            _aiProposalBar = new Border
+            {
+                IsVisible = false,
+                Background = new SolidColorBrush(Color.Parse("#FFFBEB")),
+                BorderBrush = new SolidColorBrush(Color.Parse("#F59E0B")),
+                BorderThickness = new global::Avalonia.Thickness(1),
+                CornerRadius = new global::Avalonia.CornerRadius(3),
+                Padding = new global::Avalonia.Thickness(5),
+                Margin = new global::Avalonia.Thickness(0, 3, 0, 3),
+                Child = propInner
+            };
+            DockPanel.SetDock(_aiProposalBar, Dock.Bottom);
+            root.Children.Add(_aiProposalBar);
 
             // Conversation log fills the middle (last child): rendered as markdown.
             _aiLog = new global::Markdown.Avalonia.MarkdownScrollViewer
             {
                 Markdown = string.Empty,
                 VerticalAlignment = VerticalAlignment.Stretch,
-                Margin = new global::Avalonia.Thickness(0, 6, 0, 6)
+                Margin = new global::Avalonia.Thickness(0, 3, 0, 3)
             };
             root.Children.Add(_aiLog);
 
@@ -1192,7 +1216,7 @@ namespace Calcpad.Avalonia
             // UI thread (otherwise "Call from invalid thread" and the agent can't read/insert).
             var tools = CalcpadAgentTools.Create(
                 getWorksheet: () => Dispatcher.UIThread.Invoke(() => _editor.Text ?? string.Empty),
-                insertText: text => Dispatcher.UIThread.Invoke(() => { InsertAtCaret(text); return "Inserted at the caret."; }),
+                insertText: text => Dispatcher.UIThread.Invoke(() => ShowProposal(text)), // propose, user applies
                 evaluate: src => Dispatcher.UIThread.Invoke(() => EvaluateForAssistant(src)),
                 getResult: () => Dispatcher.UIThread.Invoke(() => _lastHtml));
 
@@ -1228,6 +1252,31 @@ namespace Calcpad.Avalonia
                 return parser.HtmlResult ?? "(no result)";
             }
             catch (Exception ex) { return "error: " + ex.Message; }
+        }
+
+        // The assistant proposes a change (via the insert tool); the user reviews it and applies.
+        private string ShowProposal(string text)
+        {
+            _pendingProposal = text;
+            if (_aiProposalPreview is not null) _aiProposalPreview.Text = text;
+            if (_aiProposalBar is not null) _aiProposalBar.IsVisible = true;
+            return "Proposed to the user. They will review it and click Apply to insert it into the worksheet.";
+        }
+
+        private void ApplyProposal()
+        {
+            if (string.IsNullOrEmpty(_pendingProposal)) return;
+            InsertAtCaret(_pendingProposal);
+            AppendAi("\n\n✓ *Applied the proposed change.*\n\n");
+            _pendingProposal = null;
+            if (_aiProposalBar is not null) _aiProposalBar.IsVisible = false;
+        }
+
+        private void DismissProposal()
+        {
+            _pendingProposal = null;
+            if (_aiProposalBar is not null) _aiProposalBar.IsVisible = false;
+            AppendAi("\n\n✗ *Dismissed the proposed change.*\n\n");
         }
 
         private void AppendAi(string text)
