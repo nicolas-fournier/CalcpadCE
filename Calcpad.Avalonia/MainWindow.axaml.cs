@@ -552,7 +552,7 @@ namespace Calcpad.Avalonia
             menu.Items.Add(new Separator());
             Item("Toggle ↔ Calc", ToggleCalc);
             Item("Go to definition", GoToDefinition, "F12");
-            Item("Insert function reference…", () => { if (_selectedTag is FunctionRef fr) InsertFunction(fr); else _status.Text = "Select a function in the Files panel"; });
+            Item("Insert function reference…", () => { if (_selectedTag is FunctionRef fr) _ = InsertFunction(fr); else _status.Text = "Select a function in the Files panel"; });
             menu.Items.Add(new Separator());
             Item("Undo", () => _editor.Undo(), "Ctrl+Z");
             Item("Redo", () => _editor.Redo(), "Ctrl+Y");
@@ -1158,7 +1158,7 @@ namespace Calcpad.Avalonia
 
         private async void OpenSelectedFile()
         {
-            if (_selectedTag is FunctionRef fr) { InsertFunction(fr); return; }
+            if (_selectedTag is FunctionRef fr) { await InsertFunction(fr); return; }
             if (_selectedTag is not string path) return;
             try
             {
@@ -1168,24 +1168,47 @@ namespace Calcpad.Avalonia
         }
 
         // Insert button: a function's call (+ #include of its file) or an #include for a file.
-        private void InsertFile_Click(object? sender, RoutedEventArgs e)
+        private async void InsertFile_Click(object? sender, RoutedEventArgs e)
         {
             switch (_selectedTag)
             {
-                case FunctionRef fr: InsertFunction(fr); break;
-                case string path: InsertAtCaret($"#include {BuildLinkedPath(path)}\n"); break;
+                case FunctionRef fr: await InsertFunction(fr); break;
+                case string path: InsertAtCaret($"#include {BuildLinkedPath(await MaybeCopyIntoFolder(path))}\n"); break;
                 default: _status.Text = "Select a file or function first"; break;
             }
         }
 
         // Ensures the function's file is #included at the top, then inserts a call to it.
-        private void InsertFunction(FunctionRef fr)
+        private async System.Threading.Tasks.Task InsertFunction(FunctionRef fr)
         {
+            var filePath = await MaybeCopyIntoFolder(fr.FilePath);
             var text = _editor.Text ?? string.Empty;
-            var include = $"#include {BuildLinkedPath(fr.FilePath)}";
+            var include = $"#include {BuildLinkedPath(filePath)}";
             if (text.IndexOf(include, StringComparison.OrdinalIgnoreCase) < 0)
                 _editor.Document.Insert(0, include + "\n");
             InsertAtCaret(fr.Call + "\n");
+        }
+
+        // If the file lives outside the worksheet's folder, offer to copy it in (and return the
+        // local copy's path); otherwise return the path unchanged.
+        private async System.Threading.Tasks.Task<string> MaybeCopyIntoFolder(string filePath)
+        {
+            if (string.IsNullOrEmpty(_currentFile)) return filePath; // unsaved → nowhere local to copy
+            var docDir = Path.GetDirectoryName(_currentFile);
+            var srcDir = Path.GetDirectoryName(Path.GetFullPath(filePath));
+            if (string.IsNullOrEmpty(docDir) || string.Equals(docDir, srcDir, StringComparison.OrdinalIgnoreCase))
+                return filePath; // already local
+            try
+            {
+                var ok = await ConfirmAsync("Copy file locally?",
+                    $"'{Path.GetFileName(filePath)}' is outside this worksheet's folder.\n\nCopy it here so the worksheet is self-contained?");
+                if (!ok) return filePath;
+                var dest = Path.Combine(docDir, Path.GetFileName(filePath));
+                File.Copy(filePath, dest, overwrite: true);
+                _status.Text = "Copied " + Path.GetFileName(filePath) + " locally";
+                return dest;
+            }
+            catch { return filePath; }
         }
 
         // Returns the path to embed in the document: relative to the current worksheet's folder
@@ -1680,9 +1703,117 @@ namespace Calcpad.Avalonia
                     FileTypeChoices = new[] { new FilePickerFileType("Calcpad") { Patterns = new[] { "*.cpd" } } }
                 });
                 if (file is null) return;
-                await SaveTo(file.Path.LocalPath);
+                var oldDir = _currentFile is null ? null : Path.GetDirectoryName(_currentFile);
+                var newPath = file.Path.LocalPath;
+                await SaveTo(newPath);
+                await MaybeCopyReferencesLocally(oldDir, Path.GetDirectoryName(newPath));
             }
             catch (Exception ex) { _status.Text = "Save failed: " + ex.Message; }
+        }
+
+        // ---- Make a worksheet self-contained: copy its images/included libraries into its folder ----
+
+        // After Save As, offers to copy any image/#include referenced outside the new folder into it
+        // and rewrite the paths to local (./…), so the folder is self-contained.
+        private async System.Threading.Tasks.Task MaybeCopyReferencesLocally(string? oldDir, string? newDir)
+        {
+            if (string.IsNullOrEmpty(newDir)) return;
+            var refs = CollectExternalReferences(_editor.Text ?? string.Empty, oldDir, newDir);
+            if (refs.Count == 0) return;
+
+            var ok = await ConfirmAsync("Copy referenced files?",
+                $"This worksheet references {refs.Count} file(s) (images / included libraries) outside this folder.\n\n" +
+                "Copy them here and update the paths to local ones so the folder is self-contained?");
+            if (!ok) return;
+
+            var text = _editor.Text ?? string.Empty;
+            var copied = 0;
+            foreach (var r in refs)
+            {
+                try
+                {
+                    var sub = r.IsImage ? "Images" : string.Empty;
+                    var destDir = string.IsNullOrEmpty(sub) ? newDir : Path.Combine(newDir, sub);
+                    Directory.CreateDirectory(destDir);
+                    var dest = Path.Combine(destDir, Path.GetFileName(r.FullPath));
+                    if (!string.Equals(Path.GetFullPath(dest), Path.GetFullPath(r.FullPath), StringComparison.OrdinalIgnoreCase))
+                        File.Copy(r.FullPath, dest, overwrite: true);
+                    var localRef = (string.IsNullOrEmpty(sub) ? "./" : "./" + sub + "/") + Path.GetFileName(r.FullPath);
+                    text = text.Replace(r.Original, localRef);
+                    copied++;
+                }
+                catch { /* skip a file that can't be copied */ }
+            }
+            if (copied > 0)
+            {
+                _editor.Document.Text = text;
+                await File.WriteAllTextAsync(_currentFile!, text);
+                _dirty = false;
+                if (_active is not null) _active.Dirty = false;
+                RebuildTabs();
+                _status.Text = $"Copied {copied} file(s) locally and updated paths";
+                Render();
+            }
+        }
+
+        private readonly record struct ExtRef(string Original, string FullPath, bool IsImage);
+
+        private static System.Collections.Generic.List<ExtRef> CollectExternalReferences(string text, string? baseDir, string targetDir)
+        {
+            var list = new System.Collections.Generic.List<ExtRef>();
+            var seen = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var targetFull = Path.GetFullPath(targetDir);
+
+            void Consider(string raw, bool isImage)
+            {
+                var refPath = raw.Trim().Trim('"');
+                if (refPath.Length == 0 || refPath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                    || refPath.StartsWith("data:", StringComparison.OrdinalIgnoreCase)) return;
+                string full;
+                try { full = Path.IsPathRooted(refPath) ? Path.GetFullPath(refPath) : Path.GetFullPath(Path.Combine(baseDir ?? targetDir, refPath)); }
+                catch { return; }
+                if (!File.Exists(full)) return;
+                var dir = Path.GetDirectoryName(full) ?? string.Empty;
+                // already inside the target folder (or its Images/) → nothing to do
+                if (dir.StartsWith(targetFull, StringComparison.OrdinalIgnoreCase)) return;
+                if (seen.Add(full)) list.Add(new ExtRef(raw.Trim(), full, isImage));
+            }
+
+            foreach (var line in text.Split('\n'))
+            {
+                var t = line.TrimStart();
+                if (t.StartsWith("#include", StringComparison.OrdinalIgnoreCase))
+                    Consider(t.Substring("#include".Length).Trim(), isImage: false);
+            }
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
+                text, "src\\s*=\\s*\"([^\"]+)\"", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                Consider(m.Groups[1].Value, isImage: true);
+
+            return list;
+        }
+
+        // Minimal modal Yes/No dialog.
+        private async System.Threading.Tasks.Task<bool> ConfirmAsync(string title, string message)
+        {
+            var yes = new Button { Content = "Yes", MinWidth = 72 };
+            var no = new Button { Content = "No", MinWidth = 72 };
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
+            buttons.Children.Add(yes); buttons.Children.Add(no);
+            var panel = new StackPanel { Margin = new global::Avalonia.Thickness(16), Spacing = 14 };
+            panel.Children.Add(new TextBlock { Text = message, TextWrapping = global::Avalonia.Media.TextWrapping.Wrap, MaxWidth = 420 });
+            panel.Children.Add(buttons);
+            var dlg = new Window
+            {
+                Title = title,
+                Width = 460,
+                SizeToContent = SizeToContent.Height,
+                CanResize = false,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Content = panel
+            };
+            yes.Click += (_, _) => dlg.Close(true);
+            no.Click += (_, _) => dlg.Close(false);
+            return await dlg.ShowDialog<bool>(this);
         }
 
         private async System.Threading.Tasks.Task SaveTo(string path)
