@@ -31,7 +31,8 @@ namespace Calcpad.Avalonia
         /// is given, the collected images/libraries are also mirrored into it (used on update so the
         /// working copy stays in sync with the package).
         /// </summary>
-        public static string Save(string worksheetText, string mainDir, string? configJson, string destZip, string? syncDir = null)
+        public static string Save(string worksheetText, string mainDir, string? configJson, string destZip,
+            string? syncDir = null, string? templateLocalPath = null, string? templateEntryName = null)
         {
             var libNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // full path -> lib entry name
             var imgNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // full path -> image entry name
@@ -103,6 +104,8 @@ namespace Calcpad.Avalonia
                 WriteText(archive, "worksheet.cpd", mainOut);
                 foreach (var kv in libContents) WriteText(archive, "lib/" + kv.Key, kv.Value);
                 foreach (var kv in imgNames) archive.CreateEntryFromFile(kv.Key, "Images/" + kv.Value);
+                if (templateLocalPath is not null && templateEntryName is not null && File.Exists(templateLocalPath))
+                    archive.CreateEntryFromFile(templateLocalPath, "template/" + templateEntryName);
                 if (!string.IsNullOrEmpty(configJson)) WriteText(archive, "config.json", configJson);
                 WriteText(archive, "manifest.json",
                     JsonSerializer.Serialize(new Manifest { version = 1, entry = "worksheet.cpd" }));
@@ -127,6 +130,13 @@ namespace Calcpad.Avalonia
                         Directory.CreateDirectory(Path.GetDirectoryName(p)!);
                         if (!string.Equals(Path.GetFullPath(kv.Key), Path.GetFullPath(p), StringComparison.OrdinalIgnoreCase))
                             File.Copy(kv.Key, p, true);
+                    }
+                    if (templateLocalPath is not null && templateEntryName is not null && File.Exists(templateLocalPath))
+                    {
+                        var p = Path.Combine(syncDir, "template", templateEntryName);
+                        Directory.CreateDirectory(Path.GetDirectoryName(p)!);
+                        if (!string.Equals(Path.GetFullPath(templateLocalPath), Path.GetFullPath(p), StringComparison.OrdinalIgnoreCase))
+                            File.Copy(templateLocalPath, p, true);
                     }
                 }
                 catch { /* best effort */ }

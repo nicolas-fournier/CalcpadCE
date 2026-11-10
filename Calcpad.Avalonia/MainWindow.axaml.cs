@@ -2269,8 +2269,10 @@ namespace Calcpad.Avalonia
                 var dest = file.Path.LocalPath;
                 var mainDir = string.IsNullOrEmpty(_currentFile) ? Environment.CurrentDirectory : (Path.GetDirectoryName(_currentFile) ?? Environment.CurrentDirectory);
                 SetWorkingDirToWorksheet();
-                CpdPackage.Save(_editor.Text ?? string.Empty, mainDir, BuildConfigJson(), dest);
-                _status.Text = "Saved package " + Path.GetFileName(dest);
+                var (tmplLocal, tmplName) = await ResolvePackageTemplateAsync();
+                CpdPackage.Save(_editor.Text ?? string.Empty, mainDir, BuildConfigJson(tmplName), dest,
+                    templateLocalPath: tmplLocal, templateEntryName: tmplName);
+                _status.Text = "Saved package " + Path.GetFileName(dest) + (tmplName is null ? "" : " (+ template)");
                 OpenPackage(dest); // switch into package mode so later saves update it
             }
             catch (Exception ex) { _status.Text = "Save package failed: " + ex.Message; }
@@ -2285,7 +2287,9 @@ namespace Calcpad.Avalonia
                 var text = _editor.Text ?? string.Empty;
                 var workDir = _packageWorkDir ?? Path.GetDirectoryName(_currentFile!)!;
                 if (!string.IsNullOrEmpty(_currentFile)) await File.WriteAllTextAsync(_currentFile, text);
-                var rewritten = CpdPackage.Save(text, workDir, BuildConfigJson(), _packagePath!, syncDir: workDir);
+                var (tmplLocal, tmplName) = await ResolvePackageTemplateAsync();
+                var rewritten = CpdPackage.Save(text, workDir, BuildConfigJson(tmplName), _packagePath!,
+                    syncDir: workDir, templateLocalPath: tmplLocal, templateEntryName: tmplName);
                 var norm = rewritten.Replace("\r\n", "\n").Replace("\r", "\n");
                 if (norm != text)
                 {
@@ -2299,6 +2303,15 @@ namespace Calcpad.Avalonia
                 Render();
             }
             catch (Exception ex) { _status.Text = "Update package failed: " + ex.Message; }
+        }
+
+        // Resolves the configured Word template (cached/local copy + its name) to bundle in the
+        // package, or (null, null) when none is set / it is unreachable.
+        private async System.Threading.Tasks.Task<(string? local, string? name)> ResolvePackageTemplateAsync()
+        {
+            if (!_useTemplate || string.IsNullOrEmpty(_state.LastTemplate)) return (null, null);
+            var local = await ResolveTemplateAsync(_state.LastTemplate!);
+            return local is null ? (null, null) : (local, Path.GetFileName(_state.LastTemplate!));
         }
 
         // The editor options stored in / restored from a package's config.json.
@@ -2315,13 +2328,14 @@ namespace Calcpad.Avalonia
             public int Degrees { get; set; }
             public string Units { get; set; } = "m";
             public string Palette { get; set; } = "Rainbow";
+            public string? TemplateFile { get; set; } // Word template bundled in the package (template/…)
         }
 
-        private string BuildConfigJson() => JsonSerializer.Serialize(new PackageConfig
+        private string BuildConfigJson(string? templateName = null) => JsonSerializer.Serialize(new PackageConfig
         {
             Decimals = _decimals, Substitute = _substitute, FormatEquations = _formatEquations, Complex = _complex,
             AdaptivePlot = _adaptivePlot, EmbedImages = _embedImages, RelativePaths = _relativePaths, AutoCalc = _autoCalc,
-            Degrees = _degrees, Units = _units, Palette = _palette.ToString()
+            Degrees = _degrees, Units = _units, Palette = _palette.ToString(), TemplateFile = templateName
         });
 
         private void ApplyConfigJson(string json)
@@ -2334,9 +2348,16 @@ namespace Calcpad.Avalonia
                 _adaptivePlot = c.AdaptivePlot; _embedImages = c.EmbedImages; _relativePaths = c.RelativePaths; _autoCalc = c.AutoCalc;
                 _degrees = c.Degrees; _units = c.Units;
                 if (Enum.TryParse<PlotSettings.ColorScales>(c.Palette, out var pal)) _palette = pal;
+                // A Word template bundled in the package (template/…) → use it for Word export here.
+                if (!string.IsNullOrEmpty(c.TemplateFile) && _packageWorkDir is not null)
+                {
+                    var bundled = Path.Combine(_packageWorkDir, "template", c.TemplateFile);
+                    if (File.Exists(bundled)) { _state.LastTemplate = bundled; _useTemplate = true; }
+                }
                 var dec = this.FindControl<NumericUpDown>("Decimals");
                 if (dec is not null) dec.Value = _decimals;
                 BuildOptionsBar(); // rebuild so the toggles reflect the restored values
+                UpdateTemplateTip();
                 if (_ready) Render();
             }
             catch { /* ignore a bad config */ }
