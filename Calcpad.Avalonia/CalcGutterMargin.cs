@@ -1,6 +1,7 @@
 using System;
 using System.Globalization;
 using Avalonia;
+using Avalonia.Input;
 using Avalonia.Media;
 using AvaloniaEdit.Editing;
 using AvaloniaEdit.Rendering;
@@ -9,15 +10,38 @@ namespace Calcpad.Avalonia
 {
     // A thin left-margin glyph strip: marks each line as a calculation (ƒ) or heading (#), blank
     // for prose — so the calc/prose split is visible at a glance. Classification is delegated so
-    // it follows the editor's current mode.
+    // it follows the editor's current mode. Clicking a badge toggles that line calc<->prose.
     internal sealed class CalcGutterMargin : AbstractMargin
     {
         private readonly Func<string, char> _classify;
+        private readonly Action<int> _toggleLineByOffset;
         private readonly Typeface _typeface = new("Segoe UI");
         private static readonly IBrush CalcBrush = new SolidColorBrush(Color.Parse("#16A34A"));
         private static readonly IBrush HeadBrush = new SolidColorBrush(Color.Parse("#B2379B"));
 
-        public CalcGutterMargin(Func<string, char> classify) => _classify = classify;
+        public CalcGutterMargin(Func<string, char> classify, Action<int> toggleLineByOffset)
+        {
+            _classify = classify;
+            _toggleLineByOffset = toggleLineByOffset;
+            Cursor = new Cursor(StandardCursorType.Hand);
+        }
+
+        protected override void OnPointerPressed(PointerPressedEventArgs e)
+        {
+            base.OnPointerPressed(e);
+            var tv = TextView;
+            if (tv is null || !tv.VisualLinesValid) return;
+            var y = e.GetPosition(this).Y + tv.VerticalOffset;
+            foreach (var vl in tv.VisualLines)
+            {
+                if (y >= vl.VisualTop && y < vl.VisualTop + vl.Height)
+                {
+                    _toggleLineByOffset(vl.FirstDocumentLine.Offset);
+                    e.Handled = true;
+                    return;
+                }
+            }
+        }
 
         protected override void OnTextViewChanged(TextView? oldTextView, TextView? newTextView)
         {

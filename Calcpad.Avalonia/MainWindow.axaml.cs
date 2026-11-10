@@ -88,6 +88,7 @@ namespace Calcpad.Avalonia
         private bool _adaptivePlot = true;
         private bool _embedImages = true;     // base64 plots in the HTML (needed for the preview)
         private bool _relativePaths = true;   // insert #include/image paths relative to the worksheet
+        private bool _autoCalc;               // typing 'name =' on a prose line auto-upgrades to ':='
         private int _degrees;                 // 0 = deg, 1 = rad, 2 = grad
         private string _units = "m";
         private PlotSettings.ColorScales _palette = PlotSettings.ColorScales.Rainbow;
@@ -121,7 +122,7 @@ namespace Calcpad.Avalonia
             InitHoverTooltips();
             InitCompletion();
             InitLineNumberToggle();
-            try { _editor.TextArea.LeftMargins.Add(new CalcGutterMargin(ClassifyLineBadge)); } catch { }
+            try { _editor.TextArea.LeftMargins.Add(new CalcGutterMargin(ClassifyLineBadge, ToggleLineByOffset)); } catch { }
             BuildEditorContextMenu();
             BuildKeypad();
             BuildFormatBar();
@@ -329,6 +330,7 @@ namespace Calcpad.Avalonia
         {
             if (!_completionEnabled || _completion is not null || string.IsNullOrEmpty(e.Text)) return;
             var ch = e.Text[0];
+            if (ch == '=' && _autoCalc && TryAutoCalc()) return;
             if (ch is '=' or '/' or '*' or '+' or '-') { MaybeProposeCalc(); return; }
             if (!char.IsLetter(ch) && ch != '#') return;
 
@@ -376,6 +378,21 @@ namespace Calcpad.Avalonia
             _editor.CaretOffset = line.Offset;
             _editor.SelectionLength = 0;
             ToggleCalc(); // wraps the current line in $…$
+        }
+
+        // Auto-calc: when the line is exactly "name =" (just typed), upgrade it to "name := "
+        // so the user never types ':='. Reversible with one Ctrl+Z. Returns true if it fired.
+        private bool TryAutoCalc()
+        {
+            if (!CurrentMarkdownFull()) return false;
+            var line = _editor.Document.GetLineByOffset(_editor.CaretOffset);
+            var text = _editor.Document.GetText(line.Offset, line.Length);
+            if (!System.Text.RegularExpressions.Regex.IsMatch(text, @"^\s*[A-Za-z_]\w*\s*=\s*$")) return false;
+            var upgraded = System.Text.RegularExpressions.Regex.Replace(text, @"=\s*$", ":= ");
+            _editor.Document.Replace(line.Offset, line.Length, upgraded);
+            _editor.CaretOffset = line.Offset + upgraded.Length;
+            ScheduleRender();
+            return true;
         }
 
         // Typing a math operator (= / * + -) on a markdown prose line proposes converting it to
@@ -612,6 +629,14 @@ namespace Calcpad.Avalonia
 
         private static bool IsWordChar(char c)
             => char.IsLetterOrDigit(c) || c == '_' || "µΩ°²³".IndexOf(c) >= 0;
+
+        // Clicking a gutter badge toggles that line between calc and prose.
+        private void ToggleLineByOffset(int offset)
+        {
+            _editor.CaretOffset = Math.Clamp(offset, 0, _editor.Document.TextLength);
+            _editor.SelectionLength = 0;
+            ToggleCalc();
+        }
 
         // Gutter badge classification: 'f' = calculation, '#' = heading, ' ' = prose/directive.
         private char ClassifyLineBadge(string lineText)
@@ -1184,6 +1209,9 @@ namespace Calcpad.Avalonia
             var rel = Check("Relative paths", _relativePaths, v => _relativePaths = v);
             ToolTip.SetTip(rel, "Insert #include and image paths relative to the current worksheet (not absolute)");
             bar.Children.Add(rel);
+            var auto = Check("Auto-calc", _autoCalc, v => _autoCalc = v);
+            ToolTip.SetTip(auto, "Typing 'name =' on a line auto-upgrades it to a calculation (name := …)");
+            bar.Children.Add(auto);
 
             bar.Children.Add(LabeledCombo("Angles", new[] { "Deg", "Rad", "Grad" }, _degrees, i => _degrees = i));
             bar.Children.Add(LabeledCombo("Units", new[] { "m", "cm", "mm" }, UnitsIndex(_units), i => _units = i switch { 1 => "cm", 2 => "mm", _ => "m" }));

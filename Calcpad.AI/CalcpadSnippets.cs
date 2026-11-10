@@ -35,10 +35,6 @@ namespace Calcpad.AI
     {
         public static ReadOnlyCollection<CalcpadSnippet> All { get; } = new(new[]
         {
-            // Turning markdown on only makes sense from a classic document.
-            new CalcpadSnippet("md", "Enable markdown mode",
-                "#md full", SnippetMode.Classic),
-
             // ----- Markdown-first (#md full) -----
             new CalcpadSnippet("title", "Document title (H1)",
                 "# Title", SnippetMode.Markdown),
@@ -55,7 +51,7 @@ namespace Calcpad.AI
             new CalcpadSnippet("var", "Variable with unit (:=)",
                 "L := 6*m", SnippetMode.Markdown),
 
-            new CalcpadSnippet("units", "Result in target units ( | )",
+            new CalcpadSnippet("convert", "Convert to target units ( | )",
                 "p := 10*kN/m^2 | MPa", SnippetMode.Markdown),
 
             new CalcpadSnippet("math", "Inline math in prose",
@@ -92,7 +88,7 @@ namespace Calcpad.AI
             new CalcpadSnippet("var", "Variable with unit (=)",
                 "L = 6*m", SnippetMode.Classic),
 
-            new CalcpadSnippet("units", "Result in target units ( | )",
+            new CalcpadSnippet("convert", "Convert to target units ( | )",
                 "p = 10*kN/m^2 | MPa", SnippetMode.Classic),
 
             new CalcpadSnippet("if", "Condition block (classic)",
@@ -110,14 +106,20 @@ namespace Calcpad.AI
             new CalcpadSnippet("if", "Condition block",
                 "#if a > b\n$a$\n#else\n$b$\n#end if", SnippetMode.Markdown),
 
-            // HTML heading tags pass through only when the line is prose (markdown-first mode);
-            // a bare '<' line in classic mode is parsed as math, so these are markdown-only.
-            new CalcpadSnippet("h1", "HTML heading <h1></h1>", "<h1>Heading 1</h1>", SnippetMode.Markdown),
-            new CalcpadSnippet("h2", "HTML heading <h2></h2>", "<h2>Heading 2</h2>", SnippetMode.Markdown),
-            new CalcpadSnippet("h3", "HTML heading <h3></h3>", "<h3>Heading 3</h3>", SnippetMode.Markdown),
-            new CalcpadSnippet("h4", "HTML heading <h4></h4>", "<h4>Heading 4</h4>", SnippetMode.Markdown),
-            new CalcpadSnippet("h5", "HTML heading <h5></h5>", "<h5>Heading 5</h5>", SnippetMode.Markdown),
-            new CalcpadSnippet("h6", "HTML heading <h6></h6>", "<h6>Heading 6</h6>", SnippetMode.Markdown),
+            // ----- Compute core (Calcpad's differentiators) -----
+            new CalcpadSnippet("plot", "Plot a function", "$Plot{x^2 @ x = 0 : 10}$", SnippetMode.Markdown),
+            new CalcpadSnippet("plot", "Plot a function", "$Plot{x^2 @ x = 0 : 10}", SnippetMode.Classic),
+
+            new CalcpadSnippet("vector", "Vector / matrix literal", "v := [1; 2; 3]", SnippetMode.Markdown),
+            new CalcpadSnippet("vector", "Vector / matrix literal", "v = [1; 2; 3]", SnippetMode.Classic),
+
+            new CalcpadSnippet("repeat", "Repeat loop",
+                "#repeat 3\na := a + 1\n#loop", SnippetMode.Markdown),
+            new CalcpadSnippet("repeat", "Repeat loop",
+                "#repeat 3\na = a + 1\n#loop", SnippetMode.Classic),
+
+            new CalcpadSnippet("def", "Define a function", "$sq(x) = x^2$", SnippetMode.Markdown),
+            new CalcpadSnippet("def", "Define a function", "sq(x) = x^2", SnippetMode.Classic),
         });
 
         /// <summary>
