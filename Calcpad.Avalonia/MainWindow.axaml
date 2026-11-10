@@ -45,6 +45,9 @@
         <MenuItem Header="_Save" Click="Save_Click" InputGesture="Ctrl+S"/>
         <MenuItem Header="Save _As…" Click="SaveAs_Click" InputGesture="Ctrl+Shift+S"/>
         <Separator/>
+        <MenuItem Header="Open pac_kage (.cpdz)…" Click="OpenPackage_Click"/>
+        <MenuItem Header="Save as pac_kage (.cpdz)…" Click="SaveAsPackage_Click"/>
+        <Separator/>
         <MenuItem Header="Export _HTML…" Click="ExportHtml_Click"/>
         <MenuItem Header="Export _Word (.docx)…" Click="ExportDocx_Click"/>
         <MenuItem Header="Word _template setup…" Click="TemplateSetup_Click"/>

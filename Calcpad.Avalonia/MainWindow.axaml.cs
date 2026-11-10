@@ -73,6 +73,8 @@ namespace Calcpad.Avalonia
         private readonly string _template;   // worksheet HTML head + CSS
         private string _lastHtml = string.Empty;
         private string? _currentFile;
+        private string? _packagePath;     // the open .cpdz, when editing a package (Save updates it)
+        private string? _packageWorkDir;  // its extracted working folder
         private readonly string[] _previewFiles;
         private int _previewSlot;
         private bool _ready;
@@ -583,6 +585,7 @@ namespace Calcpad.Avalonia
             Item("Paste", () => _editor.Paste(), "Ctrl+V");
             menu.Items.Add(new Separator());
             Item("Toggle ↔ Calc", ToggleCalc);
+            Item("Insert table…", ToggleTableEditor);
             Item("Go to definition", GoToDefinition, "F12");
             Item("Insert function reference…", () => { if (_selectedTag is FunctionRef fr) _ = InsertFunction(fr); else _status.Text = "Select a function in the Files panel"; });
             menu.Items.Add(new Separator());
@@ -2090,6 +2093,7 @@ namespace Calcpad.Avalonia
 
         private void New_Click(object? sender, RoutedEventArgs e)
         {
+            _packagePath = null; _packageWorkDir = null; // a new doc is not a package
             AddTab(null, NewDocument);
             _editor.CaretOffset = _editor.Document.TextLength;
             PopulateSnippetsMenu();
@@ -2111,6 +2115,7 @@ namespace Calcpad.Avalonia
                 });
                 if (files.Count == 0) return;
                 var path = files[0].Path.LocalPath;
+                _packagePath = null; _packageWorkDir = null; // opening a plain worksheet leaves package mode
                 OpenOrActivate(path, (await File.ReadAllTextAsync(path)).Replace("\r\n", "\n").Replace("\r", "\n"));
             }
             catch (Exception ex) { _status.Text = "Open failed: " + ex.Message; }
@@ -2118,6 +2123,7 @@ namespace Calcpad.Avalonia
 
         private async void Save_Click(object? sender, RoutedEventArgs e)
         {
+            if (_packagePath is not null) { await UpdatePackage(); return; }
             if (string.IsNullOrEmpty(_currentFile)) { await SaveAs(); return; }
             await SaveTo(_currentFile);
         }
@@ -2142,6 +2148,124 @@ namespace Calcpad.Avalonia
                 await MaybeCopyReferencesLocally(oldDir, Path.GetDirectoryName(newPath));
             }
             catch (Exception ex) { _status.Text = "Save failed: " + ex.Message; }
+        }
+
+        // ---- Self-contained .cpdz package (worksheet + images + libraries + config, updatable) ----
+
+        private async void OpenPackage_Click(object? sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+                {
+                    Title = "Open Calcpad package",
+                    AllowMultiple = false,
+                    FileTypeFilter = new[] { new FilePickerFileType("Calcpad package") { Patterns = new[] { "*.cpdz" } } }
+                });
+                if (files.Count == 0) return;
+                OpenPackage(files[0].Path.LocalPath);
+            }
+            catch (Exception ex) { _status.Text = "Open package failed: " + ex.Message; }
+        }
+
+        private void OpenPackage(string zipPath)
+        {
+            var (wsPath, cfg, workDir) = CpdPackage.Open(zipPath);
+            var text = File.ReadAllText(wsPath).Replace("\r\n", "\n").Replace("\r", "\n");
+            OpenOrActivate(wsPath, text);        // loads into a tab; _currentFile = extracted worksheet.cpd
+            _packagePath = zipPath;
+            _packageWorkDir = workDir;
+            if (cfg is not null) ApplyConfigJson(cfg);
+            UpdateTitle();
+            _status.Text = "Opened package " + Path.GetFileName(zipPath);
+        }
+
+        private async void SaveAsPackage_Click(object? sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+                {
+                    Title = "Save as Calcpad package",
+                    DefaultExtension = "cpdz",
+                    SuggestedFileName = (_currentFile is null ? "worksheet" : Path.GetFileNameWithoutExtension(_currentFile)) + ".cpdz",
+                    FileTypeChoices = new[] { new FilePickerFileType("Calcpad package") { Patterns = new[] { "*.cpdz" } } }
+                });
+                if (file is null) return;
+                var dest = file.Path.LocalPath;
+                var mainDir = string.IsNullOrEmpty(_currentFile) ? Environment.CurrentDirectory : (Path.GetDirectoryName(_currentFile) ?? Environment.CurrentDirectory);
+                SetWorkingDirToWorksheet();
+                CpdPackage.Save(_editor.Text ?? string.Empty, mainDir, BuildConfigJson(), dest);
+                _status.Text = "Saved package " + Path.GetFileName(dest);
+                OpenPackage(dest); // switch into package mode so later saves update it
+            }
+            catch (Exception ex) { _status.Text = "Save package failed: " + ex.Message; }
+        }
+
+        // Re-zips the open package from the current editor text, re-collecting any newly referenced
+        // files and mirroring them into the working folder. This is the package "update" on Save.
+        private async System.Threading.Tasks.Task UpdatePackage()
+        {
+            try
+            {
+                var text = _editor.Text ?? string.Empty;
+                var workDir = _packageWorkDir ?? Path.GetDirectoryName(_currentFile!)!;
+                if (!string.IsNullOrEmpty(_currentFile)) await File.WriteAllTextAsync(_currentFile, text);
+                var rewritten = CpdPackage.Save(text, workDir, BuildConfigJson(), _packagePath!, syncDir: workDir);
+                var norm = rewritten.Replace("\r\n", "\n").Replace("\r", "\n");
+                if (norm != text)
+                {
+                    _editor.Document.Text = norm;                 // new external refs were internalized
+                    if (!string.IsNullOrEmpty(_currentFile)) await File.WriteAllTextAsync(_currentFile, norm);
+                }
+                _dirty = false;
+                if (_active is not null) _active.Dirty = false;
+                RebuildTabs();
+                _status.Text = "Updated package " + Path.GetFileName(_packagePath!);
+                Render();
+            }
+            catch (Exception ex) { _status.Text = "Update package failed: " + ex.Message; }
+        }
+
+        // The editor options stored in / restored from a package's config.json.
+        private sealed class PackageConfig
+        {
+            public int Decimals { get; set; } = 6;
+            public bool Substitute { get; set; } = true;
+            public bool FormatEquations { get; set; } = true;
+            public bool Complex { get; set; }
+            public bool AdaptivePlot { get; set; } = true;
+            public bool EmbedImages { get; set; } = true;
+            public bool RelativePaths { get; set; } = true;
+            public bool AutoCalc { get; set; }
+            public int Degrees { get; set; }
+            public string Units { get; set; } = "m";
+            public string Palette { get; set; } = "Rainbow";
+        }
+
+        private string BuildConfigJson() => JsonSerializer.Serialize(new PackageConfig
+        {
+            Decimals = _decimals, Substitute = _substitute, FormatEquations = _formatEquations, Complex = _complex,
+            AdaptivePlot = _adaptivePlot, EmbedImages = _embedImages, RelativePaths = _relativePaths, AutoCalc = _autoCalc,
+            Degrees = _degrees, Units = _units, Palette = _palette.ToString()
+        });
+
+        private void ApplyConfigJson(string json)
+        {
+            try
+            {
+                var c = JsonSerializer.Deserialize<PackageConfig>(json);
+                if (c is null) return;
+                _decimals = c.Decimals; _substitute = c.Substitute; _formatEquations = c.FormatEquations; _complex = c.Complex;
+                _adaptivePlot = c.AdaptivePlot; _embedImages = c.EmbedImages; _relativePaths = c.RelativePaths; _autoCalc = c.AutoCalc;
+                _degrees = c.Degrees; _units = c.Units;
+                if (Enum.TryParse<PlotSettings.ColorScales>(c.Palette, out var pal)) _palette = pal;
+                var dec = this.FindControl<NumericUpDown>("Decimals");
+                if (dec is not null) dec.Value = _decimals;
+                BuildOptionsBar(); // rebuild so the toggles reflect the restored values
+                if (_ready) Render();
+            }
+            catch { /* ignore a bad config */ }
         }
 
         // ---- Make a worksheet self-contained: copy its images/included libraries into its folder ----
