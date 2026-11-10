@@ -302,7 +302,20 @@ namespace Calcpad.Avalonia
         private bool _completionEnabled = true;
 
         private void InitCompletion()
-            => _editor.TextArea.TextEntered += OnTextEntered;
+        {
+            _editor.TextArea.TextEntered += OnTextEntered;
+            // Make Tab accept the selected completion (Avalonia would otherwise insert a tab).
+            _editor.TextArea.AddHandler(global::Avalonia.Input.InputElement.KeyDownEvent,
+                (object? _, global::Avalonia.Input.KeyEventArgs e) =>
+                {
+                    if (_completion is not null && e.Key == Key.Tab)
+                    {
+                        _completion.CompletionList.RequestInsertion(e);
+                        e.Handled = true;
+                    }
+                },
+                global::Avalonia.Interactivity.RoutingStrategies.Tunnel);
+        }
 
         private void OnTextEntered(object? sender, global::Avalonia.Input.TextInputEventArgs e)
         {
@@ -519,12 +532,42 @@ namespace Calcpad.Avalonia
                 if (pos is null) { ToolTip.SetIsOpen(_editor, false); return; }
                 var offset = _editor.Document.GetOffset(pos.Value.Location);
                 var word = WordAt(offset);
-                var desc = word is null ? null : CalcpadGlossary.Describe(word);
+                // Prefer a user definition's own comment, then the built-in glossary.
+                var desc = word is null ? null : (DescribeUserSymbol(word) ?? CalcpadGlossary.Describe(word));
                 if (desc is null) { ToolTip.SetIsOpen(_editor, false); return; }
                 ToolTip.SetTip(_editor, desc);
                 ToolTip.SetIsOpen(_editor, true);
             }
             catch { /* hovering is best-effort */ }
+        }
+
+        // If `word` is defined in the current worksheet, return its signature plus the comment
+        // line(s) immediately above the definition (so hovering a function shows its doc).
+        private string? DescribeUserSymbol(string word)
+        {
+            var lines = (_editor.Text ?? string.Empty).Split('\n');
+            var defRx = new System.Text.RegularExpressions.Regex(
+                @"^\s*(?:#def\s+)?(" + System.Text.RegularExpressions.Regex.Escape(word) + @"(?:\([^)]*\))?)\s*(?::?=|$)");
+            for (var i = 0; i < lines.Length; i++)
+            {
+                var m = defRx.Match(lines[i]);
+                if (!m.Success) continue;
+
+                // Gather contiguous comment lines just above the definition.
+                var comments = new System.Collections.Generic.List<string>();
+                for (var j = i - 1; j >= 0; j--)
+                {
+                    var t = lines[j].TrimStart();
+                    if (t.StartsWith("'") || t.StartsWith("\""))
+                        comments.Insert(0, t.TrimStart('\'', '"').Trim());
+                    else break;
+                }
+                var sig = m.Groups[1].Value.Trim();
+                return comments.Count > 0
+                    ? $"{sig}\n\n{string.Join("\n", comments)}"
+                    : $"{sig} — defined in this worksheet";
+            }
+            return null;
         }
 
         private string? WordAt(int offset)
