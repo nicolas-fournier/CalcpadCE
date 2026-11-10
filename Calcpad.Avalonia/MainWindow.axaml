@@ -42,6 +42,7 @@
       <MenuItem Header="_File">
         <MenuItem Header="_New" Click="New_Click" InputGesture="Ctrl+N"/>
         <MenuItem Header="_Open…" Click="Open_Click" InputGesture="Ctrl+O"/>
+        <MenuItem x:Name="RecentMenu" Header="Open _recent"/>
         <Separator/>
         <MenuItem Header="_Save" Click="Save_Click" InputGesture="Ctrl+S"/>
         <MenuItem Header="Save _As…" Click="SaveAs_Click" InputGesture="Ctrl+Shift+S"/>

@@ -47,6 +47,7 @@ namespace Calcpad.Avalonia
         private readonly WebView _webView;
         private readonly TextBlock _status;
         private readonly MenuItem _snippetsMenu;
+        private readonly MenuItem _recentMenu;
         private readonly Border _keypadHost;
         private WrapPanel? _keypadVars;   // the keypad's live Variables column
         private Border _tableOverlay = null!; // inline table editor floating over the code editor
@@ -119,6 +120,7 @@ namespace Calcpad.Avalonia
             _webView = this.FindControl<WebView>("WebView")!;
             _status = this.FindControl<TextBlock>("StatusText")!;
             _snippetsMenu = this.FindControl<MenuItem>("SnippetsMenu")!;
+            _recentMenu = this.FindControl<MenuItem>("RecentMenu")!;
             _keypadHost = this.FindControl<Border>("KeypadHost")!;
             _formatBar = this.FindControl<Border>("FormatBar")!;
             _tableOverlay = this.FindControl<Border>("TableOverlay")!;
@@ -134,6 +136,7 @@ namespace Calcpad.Avalonia
             _aiPanel = this.FindControl<Border>("AiPanel")!;
             _fileTree.DoubleTapped += (_, _) => OpenSelectedFile();
             LoadState();      // before BuildAiPanel so the saved API key is available
+            BuildRecentMenu();
             BuildAiPanel();
 
             _template = LoadTemplate();
@@ -185,7 +188,10 @@ namespace Calcpad.Avalonia
                     if (args[1].EndsWith(CpdPackage.Extension, StringComparison.OrdinalIgnoreCase))
                         OpenPackage(args[1]); // a .cpdz package passed on the command line
                     else
+                    {
                         OpenOrActivate(args[1], File.ReadAllText(args[1]).Replace("\r\n", "\n").Replace("\r", "\n"));
+                        AddRecent(args[1]);
+                    }
                     return;
                 }
             }
@@ -1537,6 +1543,78 @@ namespace Calcpad.Avalonia
             SaveState();
         }
 
+        // ---- Recent files ----
+
+        private const int MaxRecent = 12;
+
+        private void AddRecent(string? path)
+        {
+            if (string.IsNullOrEmpty(path)) return;
+            var full = Path.GetFullPath(path);
+            _state.RecentFiles.RemoveAll(p => string.Equals(p, full, StringComparison.OrdinalIgnoreCase));
+            _state.RecentFiles.Insert(0, full);
+            if (_state.RecentFiles.Count > MaxRecent)
+                _state.RecentFiles.RemoveRange(MaxRecent, _state.RecentFiles.Count - MaxRecent);
+            SaveState();
+            BuildRecentMenu();
+        }
+
+        private void BuildRecentMenu()
+        {
+            var items = new List<object>();
+            var recents = _state.RecentFiles ?? new List<string>();
+            if (recents.Count == 0)
+            {
+                items.Add(new MenuItem { Header = "(none)", IsEnabled = false });
+            }
+            else
+            {
+                for (int i = 0; i < recents.Count; i++)
+                {
+                    var path = recents[i];
+                    var mi = new MenuItem
+                    {
+                        Header = $"_{(i + 1) % 10}  {Path.GetFileName(path)}",
+                        // Avalonia uses '_' as a mnemonic; the full path tooltip stays readable.
+                    };
+                    ToolTip.SetTip(mi, path);
+                    mi.Click += async (_, _) => await OpenRecent(path);
+                    items.Add(mi);
+                }
+                items.Add(new Separator());
+                var clear = new MenuItem { Header = "_Clear recent" };
+                clear.Click += (_, _) => { _state.RecentFiles.Clear(); SaveState(); BuildRecentMenu(); };
+                items.Add(clear);
+            }
+            _recentMenu.ItemsSource = items;
+        }
+
+        private async System.Threading.Tasks.Task OpenRecent(string path)
+        {
+            if (!File.Exists(path))
+            {
+                _status.Text = "File not found: " + path;
+                _state.RecentFiles.RemoveAll(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
+                SaveState();
+                BuildRecentMenu();
+                return;
+            }
+            try
+            {
+                if (string.Equals(Path.GetExtension(path), ".cpdz", StringComparison.OrdinalIgnoreCase))
+                {
+                    OpenPackage(path);
+                }
+                else
+                {
+                    _packagePath = null; _packageWorkDir = null;
+                    OpenOrActivate(path, (await File.ReadAllTextAsync(path)).Replace("\r\n", "\n").Replace("\r", "\n"));
+                }
+                AddRecent(path);
+            }
+            catch (Exception ex) { _status.Text = "Open failed: " + ex.Message; }
+        }
+
         private void RestoreLastFolder()
         {
             if (_state.LastFolder is string dir && Directory.Exists(dir))
@@ -1550,6 +1628,7 @@ namespace Calcpad.Avalonia
             public string? LastTemplate { get; set; }    // selected Word template used for export
             public bool UseTemplate { get; set; }         // master toggle for template-based export
             public string? ApiKey { get; set; }           // saved Anthropic API key
+            public List<string> RecentFiles { get; set; } = new(); // most-recently opened .cpd / .cpdz, newest first
         }
 
         // Builds a TreeViewItem for a directory: sub-folders first, then *.cpd files, each file
@@ -1619,7 +1698,14 @@ namespace Calcpad.Avalonia
             if (_selectedTag is not string path) return;
             try
             {
+                if (string.Equals(Path.GetExtension(path), ".cpdz", StringComparison.OrdinalIgnoreCase))
+                {
+                    OpenPackage(path);
+                    return;
+                }
+                _packagePath = null; _packageWorkDir = null;
                 OpenOrActivate(path, (await File.ReadAllTextAsync(path)).Replace("\r\n", "\n").Replace("\r", "\n"));
+                AddRecent(path);
             }
             catch (Exception ex) { _status.Text = "Open failed: " + ex.Message; }
         }
@@ -2634,6 +2720,7 @@ namespace Calcpad.Avalonia
                 }
                 _packagePath = null; _packageWorkDir = null; // opening a plain worksheet leaves package mode
                 OpenOrActivate(path, (await File.ReadAllTextAsync(path)).Replace("\r\n", "\n").Replace("\r", "\n"));
+                AddRecent(path);
             }
             catch (Exception ex) { _status.Text = "Open failed: " + ex.Message; }
         }
@@ -2673,6 +2760,7 @@ namespace Calcpad.Avalonia
                 var oldDir = _currentFile is null ? null : Path.GetDirectoryName(_currentFile);
                 await SaveTo(newPath);
                 await MaybeCopyReferencesLocally(oldDir, Path.GetDirectoryName(newPath));
+                AddRecent(newPath);
             }
             catch (Exception ex) { _status.Text = "Save failed: " + ex.Message; }
         }
@@ -2706,6 +2794,7 @@ namespace Calcpad.Avalonia
             RebuildTabs();
             if (cfg is not null) ApplyConfigJson(cfg);
             UpdateTitle();
+            AddRecent(zipPath);
             _status.Text = "Opened package " + Path.GetFileName(zipPath);
         }
 
