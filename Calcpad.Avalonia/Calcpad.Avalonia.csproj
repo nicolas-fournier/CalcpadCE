@@ -25,6 +25,8 @@
     <PackageReference Include="WebViewControl-Avalonia" Version="3.120.14" />
     <!-- Pin the patched version over Avalonia's transitive one (advisory GHSA-xrw6-gwf8-vvr9). -->
     <PackageReference Include="Tmds.DBus.Protocol" Version="0.21.3" />
+    <!-- Renders the AI assistant's replies (and chat) as markdown. -->
+    <PackageReference Include="Markdown.Avalonia" Version="11.0.3" />
   </ItemGroup>
 
   <ItemGroup>

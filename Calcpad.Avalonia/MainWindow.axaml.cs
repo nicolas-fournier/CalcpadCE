@@ -59,7 +59,10 @@ namespace Calcpad.Avalonia
         private readonly ToggleButton _aiToggle;
         private readonly Border _aiPanel;
         private TextBox? _aiKey;
-        private TextBox? _aiLog;
+        private global::Markdown.Avalonia.MarkdownScrollViewer? _aiLog;
+        private readonly StringBuilder _aiLogText = new();
+        private bool _aiRenderQueued;
+        private bool _agentTextSeen;
         private TextBox? _aiInput;
         private readonly List<ChatMessage> _aiHistory = new();
         private readonly List<ChatAttachment> _aiAttachments = new();
@@ -68,7 +71,7 @@ namespace Calcpad.Avalonia
         private TextBlock? _aiAttachInfo;
         private string _lastAiReply = string.Empty;
         private bool _aiBusy;
-        private bool _agentMode;
+        private bool _agentMode = true;   // agent mode on by default
         private readonly DispatcherTimer _debounce;
         private readonly string _template;   // worksheet HTML head + CSS
         private string _lastHtml = string.Empty;
@@ -1004,17 +1007,13 @@ namespace Calcpad.Avalonia
             bottom.Children.Add(buttons);
             root.Children.Add(bottom);
 
-            // Conversation log fills the middle (last child), with its own scrollbar.
-            _aiLog = new TextBox
+            // Conversation log fills the middle (last child): rendered as markdown.
+            _aiLog = new global::Markdown.Avalonia.MarkdownScrollViewer
             {
-                IsReadOnly = true,
-                AcceptsReturn = true,
-                TextWrapping = global::Avalonia.Media.TextWrapping.Wrap,
+                Markdown = string.Empty,
                 VerticalAlignment = VerticalAlignment.Stretch,
-                Margin = new global::Avalonia.Thickness(0, 6, 0, 6),
-                FontSize = 12
+                Margin = new global::Avalonia.Thickness(0, 6, 0, 6)
             };
-            ScrollViewer.SetVerticalScrollBarVisibility(_aiLog, ScrollBarVisibility.Auto);
             root.Children.Add(_aiLog);
 
             _aiPanel.Child = root;
@@ -1022,10 +1021,13 @@ namespace Calcpad.Avalonia
             // Persistent memory: reload the previous conversation.
             var storePath = Path.Combine(Path.GetDirectoryName(StateFile)!, "ai-history.json");
             _aiStore = new JsonChatHistoryStore(storePath);
+            var first = true;
             foreach (var m in _aiStore.Load())
             {
                 _aiHistory.Add(m);
-                AppendAi($"{(m.Role == AiRole.User ? "You" : "AI")}: {m.Text}\n\n");
+                if (!first) AppendAi("\n\n---\n\n");
+                first = false;
+                AppendAi($"**{(m.Role == AiRole.User ? "You" : "AI")}:** {m.Text}\n\n");
             }
         }
 
@@ -1036,7 +1038,8 @@ namespace Calcpad.Avalonia
             _aiAttachments.Clear();
             UpdateAttachInfo();
             _aiStore?.Clear();
-            if (_aiLog is not null) _aiLog.Text = string.Empty;
+            _aiLogText.Clear();
+            if (_aiLog is not null) _aiLog.Markdown = string.Empty;
         }
 
         private async void AiAttach()
@@ -1082,7 +1085,8 @@ namespace Calcpad.Avalonia
 
             _aiBusy = true;
             _aiInput.Text = string.Empty;
-            AppendAi($"You: {prompt}\n");
+            if (_aiLogText.Length > 0) AppendAi("\n\n---\n\n");
+            AppendAi($"**You:** {prompt}\n\n");
             // Inject the CURRENT worksheet once via the system prompt (regenerated every send),
             // so the model always sees the latest state without stale copies piling up in history.
             var options = new AiOptions { ApiKey = key, SystemPrompt = CalcpadSystemPrompt.Default + "\n\n" + WorksheetContext() };
@@ -1094,10 +1098,9 @@ namespace Calcpad.Avalonia
                 else
                     await RunChatAsync(prompt, options);
             }
-            catch (Exception ex) { AppendAi($"\n[error: {ex.Message}]"); }
+            catch (Exception ex) { AppendAi($"\n\n_[error: {ex.Message}]_"); }
 
             _aiStore?.Save(_aiHistory);
-            AppendAi("\n\n");
             _aiBusy = false;
         }
 
@@ -1144,7 +1147,7 @@ namespace Calcpad.Avalonia
             _aiAttachments.Clear();
             UpdateAttachInfo();
 
-            AppendAi("\nAI: ");
+            AppendAi("**AI:** ");
             var sb = new StringBuilder();
             var client = new AnthropicAiClient(options);
             await foreach (var token in client.StreamReplyAsync(_aiHistory))
@@ -1159,20 +1162,26 @@ namespace Calcpad.Avalonia
         // Agent mode: the assistant can read, evaluate and insert into the worksheet via tools.
         private async Task RunAgentAsync(string prompt, AiOptions options)
         {
+            // The agent runs on a background thread; every tool touches UI state, so marshal to the
+            // UI thread (otherwise "Call from invalid thread" and the agent can't read/insert).
             var tools = CalcpadAgentTools.Create(
-                getWorksheet: () => _editor.Text ?? string.Empty,
-                insertText: text => { InsertAtCaret(text); return "Inserted at the caret."; },
-                evaluate: EvaluateForAssistant,
-                getResult: () => _lastHtml);
+                getWorksheet: () => Dispatcher.UIThread.Invoke(() => _editor.Text ?? string.Empty),
+                insertText: text => Dispatcher.UIThread.Invoke(() => { InsertAtCaret(text); return "Inserted at the caret."; }),
+                evaluate: src => Dispatcher.UIThread.Invoke(() => EvaluateForAssistant(src)),
+                getResult: () => Dispatcher.UIThread.Invoke(() => _lastHtml));
 
             var caller = new AnthropicModelCaller(options);
             var conv = new AgenticConversation(caller, tools);
-            conv.ToolInvoking += call => AppendAi($"\n[tool: {call.Name}] ");
-            conv.AssistantText += t => AppendAi(t);
+            conv.ToolInvoking += call => AppendAi($"\n\n🔧 *{call.Name}*\n\n");
+            _agentTextSeen = false;
+            conv.AssistantText += t => { if (!string.IsNullOrEmpty(t)) _agentTextSeen = true; AppendAi(t); };
 
             _agentHistory.Add(AgentMessage.User(prompt));
-            AppendAi("\nAI: ");
+            AppendAi("**AI:** ");
             var reply = await conv.RunAsync(_agentHistory);
+            // If the run streamed no assistant text (only tool calls), show the final reply so the
+            // user always sees an answer.
+            if (!_agentTextSeen && !string.IsNullOrWhiteSpace(reply)) AppendAi(reply);
             _agentHistory.Add(AgentMessage.Assistant(reply, Array.Empty<AgentToolCall>()));
             _lastAiReply = reply;
             _aiHistory.Add(ChatMessage.FromUser(prompt));
@@ -1199,8 +1208,14 @@ namespace Calcpad.Avalonia
         {
             if (_aiLog is null) return;
             if (!Dispatcher.UIThread.CheckAccess()) { Dispatcher.UIThread.Post(() => AppendAi(text)); return; }
-            _aiLog.Text += text;
-            _aiLog.CaretIndex = _aiLog.Text?.Length ?? 0; // keep the latest visible
+            _aiLogText.Append(text);
+            if (_aiRenderQueued) return;            // coalesce re-renders while streaming tokens
+            _aiRenderQueued = true;
+            Dispatcher.UIThread.Post(() =>
+            {
+                _aiRenderQueued = false;
+                try { _aiLog!.Markdown = _aiLogText.ToString(); } catch { }
+            }, DispatcherPriority.Background);
         }
 
         // ---- File browser ----
