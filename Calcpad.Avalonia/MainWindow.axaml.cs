@@ -131,6 +131,7 @@ namespace Calcpad.Avalonia
             _aiToggle = this.FindControl<ToggleButton>("AiToggle")!;
             _aiPanel = this.FindControl<Border>("AiPanel")!;
             _fileTree.DoubleTapped += (_, _) => OpenSelectedFile();
+            LoadState();      // before BuildAiPanel so the saved API key is available
             BuildAiPanel();
 
             _template = LoadTemplate();
@@ -146,7 +147,6 @@ namespace Calcpad.Avalonia
             BuildEditorContextMenu();
             BuildKeypad();
             BuildFormatBar();
-            LoadState();
             BuildOptionsBar();
 
             _debounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
@@ -1012,10 +1012,12 @@ namespace Calcpad.Avalonia
             {
                 Watermark = "ANTHROPIC_API_KEY",
                 PasswordChar = '•',
-                Text = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY") ?? string.Empty,
+                Text = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY") ?? _state.ApiKey ?? string.Empty,
                 FontSize = 11, MinHeight = 0, Padding = new global::Avalonia.Thickness(4, 2),
                 Margin = new global::Avalonia.Thickness(0, 0, 0, 3)
             };
+            // Persist the key locally so it survives restarts (stored in state.json on this machine).
+            _aiKey.LostFocus += (_, _) => SaveApiKey();
             DockPanel.SetDock(_aiKey, Dock.Top);
             root.Children.Add(_aiKey);
 
@@ -1132,6 +1134,7 @@ namespace Calcpad.Avalonia
             if (string.IsNullOrEmpty(prompt)) return;
             var key = _aiKey.Text?.Trim();
             if (string.IsNullOrEmpty(key)) { AppendAi("⚠ Set your Anthropic API key (or the ANTHROPIC_API_KEY env var).\n"); return; }
+            SaveApiKey(); // remember it for next launch
 
             _aiBusy = true;
             _aiInput.Text = string.Empty;
@@ -1252,6 +1255,13 @@ namespace Calcpad.Avalonia
                 return parser.HtmlResult ?? "(no result)";
             }
             catch (Exception ex) { return "error: " + ex.Message; }
+        }
+
+        private void SaveApiKey()
+        {
+            var key = _aiKey?.Text?.Trim();
+            var val = string.IsNullOrEmpty(key) ? null : key;
+            if (val != _state.ApiKey) { _state.ApiKey = val; SaveState(); }
         }
 
         // The assistant proposes a COMPLETE new worksheet; the bar shows a before/after diff, and the
@@ -1424,6 +1434,7 @@ namespace Calcpad.Avalonia
             public string? TemplateFolder { get; set; }  // folder/share holding the Word templates
             public string? LastTemplate { get; set; }    // selected Word template used for export
             public bool UseTemplate { get; set; }         // master toggle for template-based export
+            public string? ApiKey { get; set; }           // saved Anthropic API key
         }
 
         // Builds a TreeViewItem for a directory: sub-folders first, then *.cpd files, each file
