@@ -9,7 +9,13 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <AssemblyName>CalcpadAvalonia</AssemblyName>
     <RootNamespace>Calcpad.Avalonia</RootNamespace>
+    <ApplicationIcon>..\Calcpad.Wpf\resources\calcpad.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- App/window icon (shared with the WPF app). -->
+    <AvaloniaResource Include="..\Calcpad.Wpf\resources\calcpad.ico" Link="Assets\calcpad.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.3.6" />

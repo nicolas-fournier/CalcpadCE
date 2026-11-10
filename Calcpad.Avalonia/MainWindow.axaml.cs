@@ -305,10 +305,19 @@ namespace Calcpad.Avalonia
             if (_ready) Render();
         }
 
+        private static readonly string AppVersion = GetAppVersion();
+        private static string GetAppVersion()
+        {
+            var asm = typeof(MainWindow).Assembly;
+            var info = System.Reflection.CustomAttributeExtensions
+                .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(asm)?.InformationalVersion;
+            return (info ?? asm.GetName().Version?.ToString() ?? "").Split('+')[0]; // drop build metadata
+        }
+
         private void UpdateTitle()
         {
             var name = _currentFile is null ? "untitled" : Path.GetFileName(_currentFile);
-            Title = $"CalcpadCE (Avalonia) — {name}{(_dirty ? " *" : string.Empty)}";
+            Title = $"CalcpadCE {AppVersion} — {name}{(_dirty ? " *" : string.Empty)}";
         }
 
         // ---- Editor services ----

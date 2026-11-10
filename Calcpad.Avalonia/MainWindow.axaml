@@ -7,7 +7,8 @@
         MinWidth="900" MinHeight="600"
         FontSize="12"
         RequestedThemeVariant="Light"
-        Title="CalcpadCE (Avalonia preview)">
+        Icon="/Assets/calcpad.ico"
+        Title="CalcpadCE">
 
   <!-- Compact density: tighter controls throughout -->
   <Window.Styles>
