@@ -911,7 +911,9 @@ namespace Calcpad.Avalonia
             _aiBusy = true;
             _aiInput.Text = string.Empty;
             AppendAi($"You: {prompt}\n");
-            var options = new AiOptions { ApiKey = key, SystemPrompt = CalcpadSystemPrompt.Default };
+            // Inject the CURRENT worksheet once via the system prompt (regenerated every send),
+            // so the model always sees the latest state without stale copies piling up in history.
+            var options = new AiOptions { ApiKey = key, SystemPrompt = CalcpadSystemPrompt.Default + "\n\n" + WorksheetContext() };
 
             try
             {
@@ -927,13 +929,46 @@ namespace Calcpad.Avalonia
             _aiBusy = false;
         }
 
-        // Plain streaming chat (optionally multimodal with attachments).
+        // The current worksheet (its name, source, and any current render errors) as a fresh
+        // system-prompt context block, so the assistant always sees the latest state + problems.
+        private string WorksheetContext()
+        {
+            var name = _currentFile is null ? "untitled" : Path.GetFileName(_currentFile);
+            var sb = new StringBuilder();
+            sb.Append($"The user is editing this worksheet ({name}). It is the single source of truth — ");
+            sb.Append($"always reason about THIS current version:\n```calcpad\n{_editor.Text}\n```");
+
+            var errors = ExtractRenderErrors(_lastHtml);
+            if (errors.Count > 0)
+            {
+                sb.Append("\n\nThe current render has these errors — help fix them when relevant:\n");
+                foreach (var err in errors) sb.Append("- ").Append(err).Append('\n');
+            }
+            return sb.ToString();
+        }
+
+        // Pulls the <p class="err"> messages out of the rendered HTML as plain text.
+        private static System.Collections.Generic.List<string> ExtractRenderErrors(string html)
+        {
+            var list = new System.Collections.Generic.List<string>();
+            if (string.IsNullOrEmpty(html)) return list;
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
+                html, "class=\"err\"[^>]*>(.*?)</p>", System.Text.RegularExpressions.RegexOptions.Singleline))
+            {
+                var text = System.Text.RegularExpressions.Regex.Replace(m.Groups[1].Value, "<[^>]+>", "");
+                text = System.Net.WebUtility.HtmlDecode(text).Trim();
+                if (text.Length > 0) list.Add(text);
+            }
+            return list;
+        }
+
+        // Plain streaming chat (optionally multimodal with attachments). The prompt is stored
+        // clean; the worksheet lives in the (regenerated) system prompt, not in history.
         private async Task RunChatAsync(string prompt, AiOptions options)
         {
-            var userText = $"Current worksheet:\n```\n{_editor.Text}\n```\n\n{prompt}";
             _aiHistory.Add(_aiAttachments.Count > 0
-                ? ChatMessage.FromUser(userText, _aiAttachments.ToList())
-                : ChatMessage.FromUser(userText));
+                ? ChatMessage.FromUser(prompt, _aiAttachments.ToList())
+                : ChatMessage.FromUser(prompt));
             _aiAttachments.Clear();
             UpdateAttachInfo();
 
@@ -1554,7 +1589,12 @@ namespace Calcpad.Avalonia
             var dir = Path.GetDirectoryName(path) ?? baseDir;
             var sb = new StringBuilder();
             var isLocal = false;
-            foreach (var raw in File.ReadAllText(path).Replace("\r\n", "\n").Replace("\r", "\n").Split('\n'))
+            // A '\v' separates the worksheet code from its saved input-form field data — keep only
+            // the code part (matches the CLI), otherwise the form data is parsed as broken code.
+            var content = File.ReadAllText(path);
+            var vt = content.IndexOf('\v');
+            if (vt > 0) content = content.Substring(0, vt);
+            foreach (var raw in content.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n'))
             {
                 var t = raw.TrimStart();
                 if (t.StartsWith("#local", StringComparison.OrdinalIgnoreCase)) { isLocal = true; continue; }
