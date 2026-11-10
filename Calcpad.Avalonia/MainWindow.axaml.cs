@@ -89,6 +89,8 @@ namespace Calcpad.Avalonia
         private bool _embedImages = true;     // base64 plots in the HTML (needed for the preview)
         private bool _relativePaths = true;   // insert #include/image paths relative to the worksheet
         private bool _autoCalc;               // typing 'name =' on a prose line auto-upgrades to ':='
+        private bool _useTemplate;            // Word export clones a .dotx/.docx template for branding
+        private CheckBox? _templateCheck;     // the "Word template" options-bar toggle (for its tooltip)
         private int _degrees;                 // 0 = deg, 1 = rad, 2 = grad
         private string _units = "m";
         private PlotSettings.ColorScales _palette = PlotSettings.ColorScales.Rainbow;
@@ -126,6 +128,7 @@ namespace Calcpad.Avalonia
             BuildEditorContextMenu();
             BuildKeypad();
             BuildFormatBar();
+            LoadState();
             BuildOptionsBar();
 
             _debounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
@@ -1068,31 +1071,53 @@ namespace Calcpad.Avalonia
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "CalcpadAvalonia", "state.json");
 
-        private void SaveLastFolder(string dir)
+        // The company Word-template share seeded as the template picker's starting folder on first use.
+        private const string DefaultTemplateShare = @"\\192.168.0.50\Elexco\Marketing\Word";
+
+        private AppState _state = new();
+
+        // Loads persisted state once (and seeds in-memory options from it). Call before building
+        // the options bar so toggles reflect the saved values.
+        private void LoadState()
+        {
+            try
+            {
+                if (File.Exists(StateFile))
+                    _state = JsonSerializer.Deserialize<AppState>(File.ReadAllText(StateFile)) ?? new AppState();
+            }
+            catch { _state = new AppState(); }
+            _useTemplate = _state.UseTemplate;
+        }
+
+        // Single load-mutate-save point so no setting clobbers another (the old SaveLastFolder wrote
+        // a brand-new AppState and wiped every other field).
+        private void SaveState()
         {
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(StateFile)!);
-                File.WriteAllText(StateFile, JsonSerializer.Serialize(new AppState { LastFolder = dir }));
+                File.WriteAllText(StateFile, JsonSerializer.Serialize(_state));
             }
             catch { /* best effort */ }
         }
 
+        private void SaveLastFolder(string dir)
+        {
+            _state.LastFolder = dir;
+            SaveState();
+        }
+
         private void RestoreLastFolder()
         {
-            try
-            {
-                if (!File.Exists(StateFile)) return;
-                var state = JsonSerializer.Deserialize<AppState>(File.ReadAllText(StateFile));
-                if (state?.LastFolder is string dir && Directory.Exists(dir))
-                    LoadFolder(dir);
-            }
-            catch { /* ignore a corrupt state file */ }
+            if (_state.LastFolder is string dir && Directory.Exists(dir))
+                LoadFolder(dir);
         }
 
         private sealed class AppState
         {
             public string? LastFolder { get; set; }
+            public string? LastTemplate { get; set; }   // last Word template used for export
+            public bool UseTemplate { get; set; }        // master toggle for template-based export
         }
 
         // Builds a TreeViewItem for a directory: sub-folders first, then *.cpd files, each file
@@ -1270,6 +1295,29 @@ namespace Calcpad.Avalonia
             var auto = Check("Auto-calc", _autoCalc, v => _autoCalc = v);
             ToolTip.SetTip(auto, "Typing 'name =' on a line auto-upgrades it to a calculation (name := …)");
             bar.Children.Add(auto);
+
+            // Word-template export (doesn't affect the HTML preview, so no re-render on toggle).
+            var tmpl = new CheckBox
+            {
+                Content = "Word template",
+                IsChecked = _useTemplate,
+                Margin = new global::Avalonia.Thickness(0, 0, 4, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            tmpl.IsCheckedChanged += (_, _) =>
+            {
+                _useTemplate = tmpl.IsChecked == true;
+                _state.UseTemplate = _useTemplate;
+                SaveState();
+                UpdateTemplateTip();
+            };
+            _templateCheck = tmpl;
+            bar.Children.Add(tmpl);
+            var pick = MakeButton("…", async () => await ChooseTemplateAsync());
+            ToolTip.SetTip(pick, "Choose the Word template (.dotx/.docx) to clone when exporting");
+            pick.MinWidth = 26;
+            bar.Children.Add(pick);
+            UpdateTemplateTip();
 
             bar.Children.Add(LabeledCombo("Angles", new[] { "Deg", "Rad", "Grad" }, _degrees, i => _degrees = i));
             bar.Children.Add(LabeledCombo("Units", new[] { "m", "cm", "mm" }, UnitsIndex(_units), i => _units = i switch { 1 => "cm", 2 => "mm", _ => "m" }));
@@ -1637,14 +1685,69 @@ namespace Calcpad.Avalonia
                     continue;
                 }
                 if (t.StartsWith("#end def", StringComparison.OrdinalIgnoreCase)) inDef = false;
-                // Upgrade a bare variable assignment inside a macro body to ':=' for markdown.
-                var outLine = (markdownMacros && inDef && t.Length > 0 && t[0] != '#'
-                               && AssignRegex.IsMatch(raw))
-                    ? AssignRegex.Replace(raw, "$1:= ")
-                    : raw;
+                // Migrate classic macro-body lines to markdown so they still compute/print when the
+                // body is expanded at a markdown call site:
+                //  • a bare assignment  (n = n_rows(x))      → n := n_rows(x)
+                //  • a classic text line ("Label : "value)   → **Label :** $value$
+                string outLine = raw;
+                if (markdownMacros && inDef && t.Length > 0 && t[0] != '#')
+                {
+                    if (t[0] == '"' || t[0] == '\'')
+                        outLine = ConvertClassicTextLine(raw);
+                    else if (AssignRegex.IsMatch(raw))
+                        outLine = AssignRegex.Replace(raw, "$1:= ");
+                }
                 sb.Append(outLine).Append('\n');
                 if (t.StartsWith("#def", StringComparison.OrdinalIgnoreCase) && !t.StartsWith("#end def", StringComparison.OrdinalIgnoreCase))
                     inDef = true;
+            }
+            return sb.ToString();
+        }
+
+        // Converts a classic Calcpad text line (a sequence of "heading"/'comment' quoted segments
+        // interleaved with bare code expressions) to its markdown-first equivalent: quoted text
+        // becomes prose (double-quote → bold), and each code segment becomes inline math $…$ so its
+        // value is printed instead of the variable name. Macro params ($-suffixed) survive untouched
+        // for the MacroParser to substitute afterwards.
+        private static string ConvertClassicTextLine(string raw)
+        {
+            int lead = 0;
+            while (lead < raw.Length && (raw[lead] == ' ' || raw[lead] == '\t')) lead++;
+            var indent = raw.Substring(0, lead);
+            var s = raw.Substring(lead);
+            if (s.Length == 0 || (s[0] != '"' && s[0] != '\'')) return raw;
+
+            var sb = new StringBuilder(indent);
+            int i = 0;
+            while (i < s.Length)
+            {
+                var c = s[i];
+                if (c == '"' || c == '\'')
+                {
+                    int j = i + 1;
+                    while (j < s.Length && s[j] != c) j++;
+                    var text = s.Substring(i + 1, (j < s.Length ? j : s.Length) - (i + 1));
+                    if (c == '"')
+                    {
+                        var trimmed = text.Trim();
+                        if (trimmed.Length > 0) sb.Append("**").Append(trimmed).Append("** ");
+                        else sb.Append(text);
+                    }
+                    else sb.Append(text);
+                    i = j < s.Length ? j + 1 : s.Length;
+                }
+                else
+                {
+                    int j = i;
+                    while (j < s.Length && s[j] != '"' && s[j] != '\'') j++;
+                    var code = s.Substring(i, j - i).Trim();
+                    // Wrap in parentheses: inside a macro body an identifier directly before '$'
+                    // (e.g. `calibre$`) is parsed as a macro invocation, so a bare `$calibre$` would
+                    // fail with "macro not defined". The closing ')' before '$' avoids that while
+                    // staying a valid inline-math expression that prints the value.
+                    if (code.Length > 0) sb.Append("$(").Append(code).Append(")$");
+                    i = j;
+                }
             }
             return sb.ToString();
         }
@@ -1889,6 +1992,21 @@ namespace Calcpad.Avalonia
                 });
                 if (file is null) return;
 
+                // Resolve the branding template (if enabled). An unreachable share degrades to a
+                // blank export rather than failing, after confirming with the user.
+                string? templatePath = null;
+                if (_useTemplate && !string.IsNullOrWhiteSpace(_state.LastTemplate))
+                {
+                    templatePath = await ResolveTemplateAsync(_state.LastTemplate!);
+                    if (templatePath is null)
+                    {
+                        var cont = await ConfirmAsync("Template unavailable",
+                            $"The Word template\n{_state.LastTemplate}\nis not reachable right now. " +
+                            "Export without it (standard styling)?");
+                        if (!cont) { _status.Text = "Export cancelled"; return; }
+                    }
+                }
+
                 // DOCX needs the OpenXml expression list, produced when parsing with getXml = true.
                 SetWorkingDirToWorksheet();
                 var macro = new MacroParser { Include = IncludeResolver };
@@ -1896,10 +2014,79 @@ namespace Calcpad.Avalonia
                 var parser = new ExpressionParser { Settings = BuildSettings() };
                 parser.Parse(unwrapped ?? string.Empty, true, true);
 
-                new OpenXmlWriter(parser.OpenXmlExpressions).Convert(parser.HtmlResult, file.Path.LocalPath);
-                _status.Text = "Exported " + Path.GetFileName(file.Path.LocalPath);
+                var expressions = parser.OpenXmlExpressions;
+                var html = parser.HtmlResult;
+                var dest = file.Path.LocalPath;
+                // Run the writer off the UI thread: with a template it reads the (possibly network)
+                // master and clones it, which shouldn't freeze the window.
+                await System.Threading.Tasks.Task.Run(() =>
+                    new OpenXmlWriter(expressions).Convert(html, dest, templatePath ?? string.Empty));
+
+                _status.Text = templatePath is null
+                    ? "Exported " + Path.GetFileName(dest)
+                    : $"Exported {Path.GetFileName(dest)}  ·  template {Path.GetFileName(templatePath)}";
             }
             catch (Exception ex) { _status.Text = "Export failed: " + ex.Message; }
+        }
+
+        // Lets the user pick the Word template to clone on export. Remembers it and enables the
+        // template toggle. The picker opens at the last template's folder, else the company share.
+        private async System.Threading.Tasks.Task ChooseTemplateAsync()
+        {
+            try
+            {
+                global::Avalonia.Platform.Storage.IStorageFolder? start = null;
+                var seed = !string.IsNullOrWhiteSpace(_state.LastTemplate)
+                    ? Path.GetDirectoryName(_state.LastTemplate)
+                    : (Directory.Exists(DefaultTemplateShare) ? DefaultTemplateShare : null);
+                if (seed is not null)
+                {
+                    try { start = await StorageProvider.TryGetFolderFromPathAsync(seed); } catch { }
+                }
+
+                var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+                {
+                    Title = "Choose a Word template",
+                    AllowMultiple = false,
+                    SuggestedStartLocation = start,
+                    FileTypeFilter = new[]
+                    {
+                        new FilePickerFileType("Word template") { Patterns = new[] { "*.dotx", "*.docx" } }
+                    }
+                });
+                if (files.Count == 0) return;
+
+                _state.LastTemplate = files[0].Path.LocalPath;
+                _useTemplate = true;
+                _state.UseTemplate = true;
+                if (_templateCheck is not null) _templateCheck.IsChecked = true;
+                SaveState();
+                UpdateTemplateTip();
+                _status.Text = "Word template: " + Path.GetFileName(_state.LastTemplate);
+            }
+            catch (Exception ex) { _status.Text = "Template pick failed: " + ex.Message; }
+        }
+
+        // Verifies the template is reachable within a short timeout (a dead UNC share can otherwise
+        // hang for a minute). Returns the usable path, or null to fall back to a blank export.
+        private static async System.Threading.Tasks.Task<string?> ResolveTemplateAsync(string path)
+        {
+            try
+            {
+                var ok = await System.Threading.Tasks.Task.Run(() => File.Exists(path))
+                    .WaitAsync(TimeSpan.FromSeconds(4));
+                return ok ? path : null;
+            }
+            catch { return null; } // timeout, access denied, share offline, …
+        }
+
+        private void UpdateTemplateTip()
+        {
+            if (_templateCheck is null) return;
+            var tip = string.IsNullOrWhiteSpace(_state.LastTemplate)
+                ? "Export Word from a company template. Click … to choose one."
+                : (_useTemplate ? "Export clones: " : "Template (off): ") + _state.LastTemplate;
+            ToolTip.SetTip(_templateCheck, tip);
         }
 
         private string SuggestedName(string ext)
