@@ -280,7 +280,13 @@ namespace Calcpad.Avalonia
                     Cursor = new global::Avalonia.Input.Cursor(global::Avalonia.Input.StandardCursorType.Hand)
                 };
                 var captured = doc;
-                tab.PointerPressed += (_, _) => ActivateDoc(captured);
+                // Left-click activates; right-click must fall through to the context menu
+                // (activating would RebuildTabs and destroy this Border mid-gesture, killing the menu).
+                tab.PointerPressed += (_, ev) =>
+                {
+                    if (ev.GetCurrentPoint(tab).Properties.IsLeftButtonPressed)
+                        ActivateDoc(captured);
+                };
                 tab.ContextMenu = BuildTabContextMenu(captured);
                 _tabStrip.Children.Add(tab);
             }
