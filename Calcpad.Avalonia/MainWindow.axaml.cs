@@ -737,9 +737,10 @@ namespace Calcpad.Avalonia
                 Kp("π", "π"), Kp("α", "α"), Kp("β", "β"), Kp("γ", "γ"), Kp("δ", "δ"), Kp("ε", "ε"),
                 Kp("θ", "θ"), Kp("λ", "λ"), Kp("μ", "μ"), Kp("ρ", "ρ"), Kp("σ", "σ"), Kp("φ", "φ"), Kp("ω", "ω")));
 
-            // Right-hand column: this worksheet's variables (clickable) + a units palette.
-            _keypadVars = new WrapPanel { Orientation = Orientation.Horizontal };
-            var unitsPanel = new StackPanel { Orientation = Orientation.Vertical, Spacing = 1 };
+            // Right-hand column: this worksheet's variables + a units palette. The unit groups flow
+            // into several columns (WrapPanel) so the keypad stays short instead of one tall stack.
+            _keypadVars = new WrapPanel { Orientation = Orientation.Horizontal, MaxWidth = 520 };
+            var unitsWrap = new WrapPanel { Orientation = Orientation.Horizontal, MaxWidth = 520 };
             foreach (var (g, units) in KeypadUnits)
             {
                 var wrap = new WrapPanel { Orientation = Orientation.Horizontal };
@@ -747,16 +748,18 @@ namespace Calcpad.Avalonia
                 {
                     var btn = MakeButton(u, () => InsertAtCaret(u));
                     btn.Foreground = new SolidColorBrush(Color.Parse(ColUnit));
+                    btn.MinWidth = 22;                                         // compact: units are short
+                    btn.Padding = new global::Avalonia.Thickness(3, 0);
                     wrap.Children.Add(btn);
                 }
-                unitsPanel.Children.Add(SymbolRow(g, wrap));
+                unitsWrap.Children.Add(SymbolRow(g, wrap)); // header-left block that flows and wraps
             }
 
-            var column = new StackPanel { Orientation = Orientation.Vertical, Spacing = 2, Width = 250 };
+            var column = new StackPanel { Orientation = Orientation.Vertical, Spacing = 1 };
             column.Children.Add(new TextBlock { Text = "Variables", FontSize = 11, FontWeight = FontWeight.SemiBold, Foreground = new SolidColorBrush(Color.Parse("#6B7280")) });
-            column.Children.Add(new ScrollViewer { MaxHeight = 56, Content = _keypadVars, HorizontalScrollBarVisibility = global::Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled });
+            column.Children.Add(_keypadVars);
             column.Children.Add(new TextBlock { Text = "Units", FontSize = 11, FontWeight = FontWeight.SemiBold, Foreground = new SolidColorBrush(Color.Parse("#6B7280")), Margin = new global::Avalonia.Thickness(0, 2, 0, 0) });
-            column.Children.Add(unitsPanel);
+            column.Children.Add(unitsWrap);
 
             var root = new DockPanel { LastChildFill = true };
             var colBorder = new Border
@@ -775,16 +778,21 @@ namespace Calcpad.Avalonia
             RefreshKeypadVariables();
         }
 
-        // A compact label + content row for the keypad's units sub-groups.
+        // A compact label + content block for the keypad's unit sub-groups. Blocks flow in a
+        // WrapPanel, so each carries a right margin to separate columns.
         private static Control SymbolRow(string title, Control content)
         {
             var header = new TextBlock
             {
                 Text = title, FontSize = 10,
                 Foreground = new SolidColorBrush(Color.Parse("#9AA1AC")),
-                Width = 56, VerticalAlignment = VerticalAlignment.Center
+                Width = 46, VerticalAlignment = VerticalAlignment.Center
             };
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
+            var row = new StackPanel
+            {
+                Orientation = Orientation.Horizontal, Spacing = 2,
+                Margin = new global::Avalonia.Thickness(0, 0, 10, 0)
+            };
             row.Children.Add(header);
             row.Children.Add(content);
             return row;
