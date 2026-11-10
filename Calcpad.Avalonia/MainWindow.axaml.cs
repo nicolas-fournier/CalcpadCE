@@ -451,15 +451,22 @@ namespace Calcpad.Avalonia
                     content: name + "  —  variable", colorHex: ColVar,
                     postComplete: ConvertLineToCalcIfExpression));
 
-            // Units (green).
+            // Units (green). The filter key carries the description so a unit is also found by its
+            // name (typing "celsius" surfaces °C); insertion still uses the bare unit token.
             foreach (var u in CalcpadGlossary.UnitNames)
-                list.Add(new CompletionData(u, priority: 40,
-                    description: CalcpadGlossary.Describe(u) ?? "unit", content: u + "  —  unit", colorHex: ColUnit));
+            {
+                var d = CalcpadGlossary.Describe(u) ?? "unit";
+                list.Add(new CompletionData($"{u} {d}", insert: u, priority: 40,
+                    description: d, content: u + "  —  unit", colorHex: ColUnit));
+            }
 
-            // Built-in functions (blue).
+            // Built-in functions (blue). Same — searchable by description, inserts "name(".
             foreach (var fn in CalcpadGlossary.FunctionNames)
-                list.Add(new CompletionData(fn, fn + "(", priority: 30,
-                    description: CalcpadGlossary.Describe(fn) ?? "function", content: fn + "  —  function", colorHex: ColFunc));
+            {
+                var d = CalcpadGlossary.Describe(fn) ?? "function";
+                list.Add(new CompletionData($"{fn} {d}", insert: fn + "(", priority: 30,
+                    description: d, content: fn + "  —  function", colorHex: ColFunc));
+            }
 
             // Mode-aware snippets (purple). Priority above units/functions so a snippet wins its
             // own exact trigger on Tab (e.g. 'var' snippet beats the 'VAR' volt-amp-reactive unit).
@@ -2079,6 +2086,9 @@ namespace Calcpad.Avalonia
             catch (Exception ex) { _status.Text = "Export failed: " + ex.Message; }
         }
 
+        private async void TemplateSetup_Click(object? sender, RoutedEventArgs e)
+            => await ChooseTemplateAsync();
+
         private async void ExportDocx_Click(object? sender, RoutedEventArgs e)
         {
             try
@@ -2134,6 +2144,9 @@ namespace Calcpad.Avalonia
         // whether exports use it. Everything is persisted to state.json.
         private async System.Threading.Tasks.Task ChooseTemplateAsync()
         {
+          try
+          {
+            _status.Text = "Opening Word template setup…";
             var folderBox = new TextBox
             {
                 Text = _state.TemplateFolder
@@ -2261,6 +2274,8 @@ namespace Calcpad.Avalonia
             _status.Text = _state.LastTemplate is null
                 ? "No Word template set"
                 : (_useTemplate ? "Word template: " : "Word template (off): ") + Path.GetFileName(_state.LastTemplate);
+          }
+          catch (Exception ex) { _status.Text = "Template setup failed: " + ex.Message; }
         }
 
         private static string TemplateCacheDir =>

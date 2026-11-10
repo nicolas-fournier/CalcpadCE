@@ -44,10 +44,14 @@ namespace Calcpad.Avalonia
             ["Hz"] = "hertz, frequency", ["kHz"] = "kilohertz", ["MHz"] = "megahertz", ["GHz"] = "gigahertz",
             ["Wb"] = "weber, magnetic flux", ["T"] = "tesla, magnetic field", ["S"] = "siemens",
             ["VA"] = "volt-ampere", ["VAR"] = "volt-ampere reactive", ["Ah"] = "ampere-hour",
+            // temperature
+            ["°C"] = "degree Celsius, temperature", ["°F"] = "degree Fahrenheit, temperature",
+            ["K"] = "kelvin, temperature", ["°R"] = "degree Rankine, temperature",
+            ["Δ°C"] = "Celsius temperature difference", ["Δ°F"] = "Fahrenheit temperature difference",
             // other
-            ["K"] = "kelvin, temperature", ["mol"] = "mole, amount", ["cd"] = "candela",
+            ["mol"] = "mole, amount", ["cd"] = "candela",
             ["lm"] = "lumen", ["lx"] = "lux", ["L"] = "litre, volume", ["mL"] = "millilitre",
-            ["rad"] = "radian, angle", ["deg"] = "degree, angle", ["grad"] = "gradian",
+            ["°"] = "degree, angle", ["rad"] = "radian, angle", ["deg"] = "degree, angle", ["grad"] = "gradian",
             ["Bq"] = "becquerel", ["Gy"] = "gray", ["Sv"] = "sievert",
         };
 
