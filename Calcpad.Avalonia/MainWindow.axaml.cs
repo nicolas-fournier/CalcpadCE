@@ -2616,12 +2616,19 @@ namespace Calcpad.Avalonia
                     AllowMultiple = false,
                     FileTypeFilter = new[]
                     {
-                        new FilePickerFileType("Calcpad") { Patterns = new[] { "*.cpd", "*.txt" } },
+                        new FilePickerFileType("Calcpad worksheet or package") { Patterns = new[] { "*.cpd", "*.cpdz", "*.txt" } },
+                        new FilePickerFileType("Calcpad package") { Patterns = new[] { "*.cpdz" } },
                         FilePickerFileTypes.All
                     }
                 });
                 if (files.Count == 0) return;
                 var path = files[0].Path.LocalPath;
+                // A .cpdz is a zipped package → extract and open in package mode, not as plain text.
+                if (string.Equals(Path.GetExtension(path), ".cpdz", StringComparison.OrdinalIgnoreCase))
+                {
+                    OpenPackage(path);
+                    return;
+                }
                 _packagePath = null; _packageWorkDir = null; // opening a plain worksheet leaves package mode
                 OpenOrActivate(path, (await File.ReadAllTextAsync(path)).Replace("\r\n", "\n").Replace("\r", "\n"));
             }
