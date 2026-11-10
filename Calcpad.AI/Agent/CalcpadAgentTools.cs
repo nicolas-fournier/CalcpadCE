@@ -25,7 +25,7 @@ namespace Calcpad.AI
             var noProps = new Dictionary<string, JsonElement>();
             var textProp = new Dictionary<string, JsonElement>
             {
-                ["text"] = AiTool.Prop("string", "The Calcpad/markdown text to insert into the worksheet.")
+                ["text"] = AiTool.Prop("string", "The COMPLETE updated worksheet source. Start from get_worksheet and KEEP all of the user's existing content; add or change only what was asked. The user sees a before/after diff and applies it.")
             };
             var sourceProp = new Dictionary<string, JsonElement>
             {
@@ -39,15 +39,15 @@ namespace Calcpad.AI
                     noProps, [],
                     (_, _) => Task.FromResult(getWorksheet() ?? string.Empty)),
 
-                new("insert_calcpad",
-                    "Proposes Calcpad/markdown text to insert into the worksheet at the caret (the user may need to approve it). Prefer #md full nomenclature.",
+                new("propose_worksheet",
+                    "Proposes the COMPLETE updated worksheet. First call get_worksheet and keep ALL existing content, changing only what the user asked. The user reviews a before/after diff and applies it. Prefer #md full nomenclature.",
                     textProp, ["text"],
                     (input, _) =>
                     {
                         var text = AiTool.GetString(input, "text");
                         if (string.IsNullOrEmpty(text))
-                            return Task.FromResult("Nothing to insert: 'text' was empty.");
-                        return Task.FromResult(insertText(text) ?? "Inserted.");
+                            return Task.FromResult("Nothing to propose: 'text' was empty.");
+                        return Task.FromResult(insertText(text) ?? "Proposed.");
                     }),
 
                 new("evaluate_calcpad",

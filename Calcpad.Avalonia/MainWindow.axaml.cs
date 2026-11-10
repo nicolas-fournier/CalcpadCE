@@ -1040,7 +1040,7 @@ namespace Calcpad.Avalonia
             propButtons.Children.Add(Mini("✓ Apply", ApplyProposal));
             propButtons.Children.Add(Mini("✗ Dismiss", DismissProposal));
             var propInner = new StackPanel { Orientation = Orientation.Vertical, Spacing = 2 };
-            propInner.Children.Add(new TextBlock { Text = "Proposed change", FontWeight = FontWeight.SemiBold, FontSize = 11, Foreground = new SolidColorBrush(Color.Parse("#92400E")) });
+            propInner.Children.Add(new TextBlock { Text = "Proposed change — before/after (red = removed, green = added)", FontWeight = FontWeight.SemiBold, FontSize = 11, TextWrapping = global::Avalonia.Media.TextWrapping.Wrap, Foreground = new SolidColorBrush(Color.Parse("#92400E")) });
             propInner.Children.Add(new ScrollViewer { Content = _aiProposalPreview, MaxHeight = 120, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
             propInner.Children.Add(propButtons);
             _aiProposalBar = new Border
@@ -1254,20 +1254,66 @@ namespace Calcpad.Avalonia
             catch (Exception ex) { return "error: " + ex.Message; }
         }
 
-        // The assistant proposes a change (via the insert tool); the user reviews it and applies.
+        // The assistant proposes a COMPLETE new worksheet; the bar shows a before/after diff, and the
+        // user applies it (replacing the document) or dismisses it.
         private string ShowProposal(string text)
         {
-            _pendingProposal = text;
-            if (_aiProposalPreview is not null) _aiProposalPreview.Text = text;
+            _pendingProposal = text.Replace("\r\n", "\n").Replace("\r", "\n");
+            if (_aiProposalPreview is not null) RenderDiff(_editor.Text ?? string.Empty, _pendingProposal);
             if (_aiProposalBar is not null) _aiProposalBar.IsVisible = true;
-            return "Proposed to the user. They will review it and click Apply to insert it into the worksheet.";
+            return "Proposed to the user as a before/after diff. They will review and click Apply to update the worksheet.";
+        }
+
+        private void RenderDiff(string before, string after)
+        {
+            if (_aiProposalPreview is null) return;
+            _aiProposalPreview.Inlines?.Clear();
+            var inlines = _aiProposalPreview.Inlines!;
+            var changes = 0;
+            foreach (var (tag, line) in DiffLines(before, after))
+            {
+                var (prefix, color) = tag switch
+                {
+                    '+' => ("+ ", "#166534"),  // added  (green)
+                    '-' => ("- ", "#B91C1C"),  // removed (red)
+                    _ => ("  ", "#94A3B8")      // context (grey)
+                };
+                if (tag != ' ') changes++;
+                inlines.Add(new global::Avalonia.Controls.Documents.Run(prefix + line) { Foreground = new SolidColorBrush(Color.Parse(color)) });
+                inlines.Add(new global::Avalonia.Controls.Documents.LineBreak());
+            }
+            if (changes == 0)
+                inlines.Add(new global::Avalonia.Controls.Documents.Run("(no changes)") { Foreground = new SolidColorBrush(Color.Parse("#94A3B8")) });
+        }
+
+        // Unified line diff (LCS). Returns each line tagged '+' added, '-' removed, ' ' unchanged.
+        private static System.Collections.Generic.List<(char tag, string line)> DiffLines(string before, string after)
+        {
+            var a = before.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
+            var b = after.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
+            int n = a.Length, m = b.Length;
+            var dp = new int[n + 1, m + 1];
+            for (int i = n - 1; i >= 0; i--)
+                for (int j = m - 1; j >= 0; j--)
+                    dp[i, j] = a[i] == b[j] ? dp[i + 1, j + 1] + 1 : Math.Max(dp[i + 1, j], dp[i, j + 1]);
+            var res = new System.Collections.Generic.List<(char, string)>();
+            int x = 0, y = 0;
+            while (x < n && y < m)
+            {
+                if (a[x] == b[y]) { res.Add((' ', a[x])); x++; y++; }
+                else if (dp[x + 1, y] >= dp[x, y + 1]) { res.Add(('-', a[x])); x++; }
+                else { res.Add(('+', b[y])); y++; }
+            }
+            while (x < n) { res.Add(('-', a[x])); x++; }
+            while (y < m) { res.Add(('+', b[y])); y++; }
+            return res;
         }
 
         private void ApplyProposal()
         {
             if (string.IsNullOrEmpty(_pendingProposal)) return;
-            InsertAtCaret(_pendingProposal);
-            AppendAi("\n\n✓ *Applied the proposed change.*\n\n");
+            _editor.Document.Replace(0, _editor.Document.TextLength, _pendingProposal); // full replace, undoable
+            AppendAi("\n\n✓ *Applied — the worksheet was updated (Ctrl+Z to revert).*\n\n");
             _pendingProposal = null;
             if (_aiProposalBar is not null) _aiProposalBar.IsVisible = false;
         }
