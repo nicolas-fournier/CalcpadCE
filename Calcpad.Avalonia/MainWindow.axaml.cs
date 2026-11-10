@@ -58,6 +58,9 @@ namespace Calcpad.Avalonia
         private readonly ToggleButton _keypadToggle;
         private readonly ToggleButton _aiToggle;
         private readonly Border _aiPanel;
+        private Grid _mainGrid = null!;
+        private GridSplitter _fileSplitter = null!, _aiSplitter = null!;
+        private double _fileColWidth = 240, _aiColWidth = 340; // remembered panel widths
         private TextBox? _aiKey;
         private global::Markdown.Avalonia.MarkdownScrollViewer? _aiLog;
         private readonly StringBuilder _aiLogText = new();
@@ -115,6 +118,9 @@ namespace Calcpad.Avalonia
             _formatBar = this.FindControl<Border>("FormatBar")!;
             _tableOverlay = this.FindControl<Border>("TableOverlay")!;
             _filePanel = this.FindControl<Border>("FilePanel")!;
+            _mainGrid = this.FindControl<Grid>("MainGrid")!;
+            _fileSplitter = this.FindControl<GridSplitter>("FileSplitter")!;
+            _aiSplitter = this.FindControl<GridSplitter>("AiSplitter")!;
             _fileTree = this.FindControl<TreeView>("FileTree")!;
             _optionsBar = this.FindControl<Border>("OptionsBar")!;
             _filesToggle = this.FindControl<ToggleButton>("FilesToggle")!;
@@ -936,11 +942,31 @@ namespace Calcpad.Avalonia
         // Toolbar toggle buttons drive panel visibility; the View menu items flip the buttons.
         // (Guarded: IsCheckedChanged can fire during XAML load, before the fields are assigned.)
         private void FilesToggle_Changed(object? sender, RoutedEventArgs e)
-        { if (_filePanel is not null && sender is ToggleButton t) _filePanel.IsVisible = t.IsChecked == true; }
+        { if (_mainGrid is not null && sender is ToggleButton t) SetSidePanel(0, _filePanel, _fileSplitter, ref _fileColWidth, 240, t.IsChecked == true); }
         private void KeypadToggle_Changed(object? sender, RoutedEventArgs e)
         { if (_keypadHost is not null && sender is ToggleButton t) _keypadHost.IsVisible = t.IsChecked == true; }
         private void AiToggle_Changed(object? sender, RoutedEventArgs e)
-        { if (_aiPanel is not null && sender is ToggleButton t) _aiPanel.IsVisible = t.IsChecked == true; }
+        { if (_mainGrid is not null && sender is ToggleButton t) SetSidePanel(4, _aiPanel, _aiSplitter, ref _aiColWidth, 340, t.IsChecked == true); }
+
+        // Shows/hides a resizable side panel: toggles the panel + its splitter and collapses the
+        // column to 0 (remembering the dragged width to restore it next time).
+        private void SetSidePanel(int column, Border panel, GridSplitter splitter, ref double remembered, double fallback, bool visible)
+        {
+            var col = _mainGrid.ColumnDefinitions[column];
+            if (visible)
+            {
+                col.Width = new global::Avalonia.Controls.GridLength(remembered > 40 ? remembered : fallback);
+                panel.IsVisible = true;
+                splitter.IsVisible = true;
+            }
+            else
+            {
+                if (col.ActualWidth > 40) remembered = col.ActualWidth; // keep the current width
+                col.Width = new global::Avalonia.Controls.GridLength(0);
+                panel.IsVisible = false;
+                splitter.IsVisible = false;
+            }
+        }
 
         private void ToggleKeypad_Click(object? sender, RoutedEventArgs e)
             => _keypadToggle.IsChecked = !(_keypadToggle.IsChecked == true);

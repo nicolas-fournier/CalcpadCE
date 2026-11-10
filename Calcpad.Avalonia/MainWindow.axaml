@@ -104,50 +104,65 @@
     <Border x:Name="KeypadHost" DockPanel.Dock="Bottom" Background="#FAFAFB"
             BorderBrush="#E2E4E8" BorderThickness="0,1,0,0" Padding="6,3"/>
 
-    <!-- File browser (left) -->
-    <Border x:Name="FilePanel" DockPanel.Dock="Left" Width="240" Background="#FAFAFB"
-            BorderBrush="#E2E4E8" BorderThickness="0,0,1,0">
-      <DockPanel>
-        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="6" Margin="8,8,8,4">
-          <TextBlock Text="Files" FontWeight="SemiBold" VerticalAlignment="Center"/>
-          <Button Content="Open folder…" Click="OpenFolder_Click" Padding="6,2"/>
-          <Button Content="Insert" Click="InsertFile_Click" Padding="6,2"
-                  ToolTip.Tip="Insert #include for the selected file at the caret"/>
-        </StackPanel>
-        <TreeView x:Name="FileTree" SelectionChanged="FileTree_SelectionChanged" Margin="4"/>
-      </DockPanel>
-    </Border>
+    <!-- Files | Editor/Preview | AI — all resizable via splitters -->
+    <Grid x:Name="MainGrid">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="240" MinWidth="0"/>   <!-- 0: file browser -->
+        <ColumnDefinition Width="Auto"/>               <!-- 1: splitter -->
+        <ColumnDefinition Width="*"/>                  <!-- 2: editor | preview -->
+        <ColumnDefinition Width="Auto"/>               <!-- 3: splitter -->
+        <ColumnDefinition Width="0" MinWidth="0"/>     <!-- 4: AI (hidden by default) -->
+      </Grid.ColumnDefinitions>
 
-    <!-- AI assistant (right, collapsible) -->
-    <Border x:Name="AiPanel" DockPanel.Dock="Right" Width="340" IsVisible="False"
-            Background="#FAFAFB" BorderBrush="#E2E4E8" BorderThickness="1,0,0,0" Padding="8"/>
-
-    <!-- Editor | Preview split -->
-    <Grid ColumnDefinitions="*,4,*">
-      <Border Grid.Column="0" BorderBrush="#E2E4E8" BorderThickness="0,0,1,0">
+      <!-- File browser -->
+      <Border x:Name="FilePanel" Grid.Column="0" Background="#FAFAFB"
+              BorderBrush="#E2E4E8" BorderThickness="0,0,1,0">
         <DockPanel>
-          <ScrollViewer DockPanel.Dock="Top" HorizontalScrollBarVisibility="Auto"
-                        VerticalScrollBarVisibility="Disabled" Background="#F3F4F6">
-            <StackPanel x:Name="TabStrip" Orientation="Horizontal" Height="26"/>
-          </ScrollViewer>
-          <!-- Table editor: docked below the code (no overlap); the code stays visible above -->
-          <Border x:Name="TableOverlay" DockPanel.Dock="Bottom" IsVisible="False"
-                  Background="#FBFBFC" BorderBrush="#E2E4E8" BorderThickness="0,1,0,0"
-                  Padding="6,4" MaxHeight="280"/>
-          <aedit:TextEditor x:Name="Editor"
-                            FontFamily="Cascadia Code,Consolas,Menlo,monospace"
-                            FontSize="13"
-                            ShowLineNumbers="True"
-                            HorizontalScrollBarVisibility="Auto"
-                            VerticalScrollBarVisibility="Auto"/>
+          <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="6" Margin="8,8,8,4">
+            <TextBlock Text="Files" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            <Button Content="Open folder…" Click="OpenFolder_Click" Padding="6,2"/>
+            <Button Content="Insert" Click="InsertFile_Click" Padding="6,2"
+                    ToolTip.Tip="Insert #include for the selected file at the caret"/>
+          </StackPanel>
+          <TreeView x:Name="FileTree" SelectionChanged="FileTree_SelectionChanged" Margin="4"/>
         </DockPanel>
       </Border>
 
-      <GridSplitter Grid.Column="1" Background="#E2E4E8" ResizeDirection="Columns"/>
+      <GridSplitter x:Name="FileSplitter" Grid.Column="1" Width="4" Background="#E2E4E8" ResizeDirection="Columns"/>
 
-      <Border Grid.Column="2" Background="White">
-        <webview:WebView x:Name="WebView" Focusable="True"/>
-      </Border>
+      <!-- Editor | Preview split -->
+      <Grid Grid.Column="2" ColumnDefinitions="*,4,*">
+        <Border Grid.Column="0" BorderBrush="#E2E4E8" BorderThickness="0,0,1,0">
+          <DockPanel>
+            <ScrollViewer DockPanel.Dock="Top" HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Disabled" Background="#F3F4F6">
+              <StackPanel x:Name="TabStrip" Orientation="Horizontal" Height="26"/>
+            </ScrollViewer>
+            <!-- Table editor: docked below the code (no overlap); the code stays visible above -->
+            <Border x:Name="TableOverlay" DockPanel.Dock="Bottom" IsVisible="False"
+                    Background="#FBFBFC" BorderBrush="#E2E4E8" BorderThickness="0,1,0,0"
+                    Padding="6,4" MaxHeight="280"/>
+            <aedit:TextEditor x:Name="Editor"
+                              FontFamily="Cascadia Code,Consolas,Menlo,monospace"
+                              FontSize="13"
+                              ShowLineNumbers="True"
+                              HorizontalScrollBarVisibility="Auto"
+                              VerticalScrollBarVisibility="Auto"/>
+          </DockPanel>
+        </Border>
+
+        <GridSplitter Grid.Column="1" Background="#E2E4E8" ResizeDirection="Columns"/>
+
+        <Border Grid.Column="2" Background="White">
+          <webview:WebView x:Name="WebView" Focusable="True"/>
+        </Border>
+      </Grid>
+
+      <GridSplitter x:Name="AiSplitter" Grid.Column="3" Width="4" Background="#E2E4E8" ResizeDirection="Columns" IsVisible="False"/>
+
+      <!-- AI assistant (collapsible, resizable) -->
+      <Border x:Name="AiPanel" Grid.Column="4" IsVisible="False"
+              Background="#FAFAFB" BorderBrush="#E2E4E8" BorderThickness="1,0,0,0" Padding="8"/>
     </Grid>
   </DockPanel>
 </Window>
