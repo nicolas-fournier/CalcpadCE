@@ -322,13 +322,32 @@ namespace Calcpad.Cli
             }
             i += 4;
             var outFile = fileName[i..].Trim();
+            // Optional "--template <path>" for branded .docx export (path runs to the end, so it may
+            // contain spaces). Extract it, then strip the -s/-b flags from whichever part trails them.
+            string templatePath = null;
+            var tmplIdx = outFile.IndexOf("--template", StringComparison.Ordinal);
+            if (tmplIdx >= 0)
+            {
+                templatePath = outFile[(tmplIdx + "--template".Length)..].Trim();
+                outFile = outFile[..tmplIdx].TrimEnd();
+            }
             var isSilent = false;
             var isBodyOnly = false;
-            while (true)
+            StripFlags(ref outFile);
+            if (templatePath is not null)
             {
-                if (outFile.EndsWith(" -s", StringComparison.Ordinal))      { isSilent    = true; outFile = outFile[..^3].TrimEnd(); }
-                else if (outFile.EndsWith(" -b", StringComparison.Ordinal)) { isBodyOnly  = true; outFile = outFile[..^3].TrimEnd(); }
-                else break;
+                StripFlags(ref templatePath);
+                if (string.IsNullOrWhiteSpace(templatePath)) templatePath = null;
+            }
+
+            void StripFlags(ref string s)
+            {
+                while (true)
+                {
+                    if (s.EndsWith(" -s", StringComparison.Ordinal))      { isSilent   = true; s = s[..^3].TrimEnd(); }
+                    else if (s.EndsWith(" -b", StringComparison.Ordinal)) { isBodyOnly = true; s = s[..^3].TrimEnd(); }
+                    else break;
+                }
             }
 
             // Force decimal separator to "." for body-only in CI build
@@ -385,7 +404,7 @@ namespace Calcpad.Cli
                 if (ext == ".html" || ext == ".htm")
                     converter.ToHtml(htmlResult, outFile);
                 else if (ext == ".docx")
-                    converter.ToOpenXml(htmlResult, outFile, parser.OpenXmlExpressions);
+                    converter.ToOpenXml(htmlResult, outFile, parser.OpenXmlExpressions, templatePath);
                 else if (ext == ".pdf")
                     converter.ToPdf(htmlResult, outFile);
                 else

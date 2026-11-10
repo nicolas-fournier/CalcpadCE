@@ -35,10 +35,11 @@ namespace Calcpad.Cli
             }
         }
 
-        internal void ToOpenXml(string html, string path, List<string> expressions)
+        internal void ToOpenXml(string html, string path, List<string> expressions, string templatePath = null)
         {
             html = GetHtmlData(HtmlApplyWorksheet(html));
-            new OpenXmlWriter(expressions).Convert(html, path);
+            // A non-empty templatePath clones that .dotx/.docx and injects the content; empty = blank.
+            new OpenXmlWriter(expressions).Convert(html, path, templatePath ?? string.Empty);
             if (!_isSilent && File.Exists(path))
                 Run(path);
         }
