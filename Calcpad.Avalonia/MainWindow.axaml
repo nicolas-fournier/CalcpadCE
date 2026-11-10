@@ -81,7 +81,8 @@
         <Button Content="Preview in browser" Click="OpenInBrowser_Click"/>
         <TextBlock Text="Decimals" VerticalAlignment="Center" Foreground="#4B5563"/>
         <NumericUpDown x:Name="Decimals" Minimum="0" Maximum="15" Increment="1" Value="6"
-                       Width="78" VerticalAlignment="Center" ValueChanged="Decimals_Changed"/>
+                       FormatString="0" Width="104" MinWidth="104" VerticalAlignment="Center"
+                       HorizontalContentAlignment="Left" ValueChanged="Decimals_Changed"/>
         <TextBlock x:Name="StatusText" VerticalAlignment="Center" Foreground="#4B5563"/>
       </StackPanel>
     </Border>
