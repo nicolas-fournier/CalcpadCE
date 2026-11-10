@@ -121,6 +121,7 @@ namespace Calcpad.Avalonia
             InitHoverTooltips();
             InitCompletion();
             InitLineNumberToggle();
+            try { _editor.TextArea.LeftMargins.Add(new CalcGutterMargin(ClassifyLineBadge)); } catch { }
             BuildEditorContextMenu();
             BuildKeypad();
             BuildFormatBar();
@@ -257,6 +258,7 @@ namespace Calcpad.Avalonia
             if (e.Key == Key.F5) { Render(); e.Handled = true; return; }
             if (e.Key == Key.F12) { GoToDefinition(); e.Handled = true; return; }
             if (!e.KeyModifiers.HasFlag(KeyModifiers.Control)) return;
+            if (e.Key is Key.OemPlus or Key.Add) { ToggleCalc(); e.Handled = true; return; } // Ctrl+= toggles calc/prose
             var args = new RoutedEventArgs();
             switch (e.Key)
             {
@@ -610,6 +612,23 @@ namespace Calcpad.Avalonia
 
         private static bool IsWordChar(char c)
             => char.IsLetterOrDigit(c) || c == '_' || "µΩ°²³".IndexOf(c) >= 0;
+
+        // Gutter badge classification: 'f' = calculation, '#' = heading, ' ' = prose/directive.
+        private char ClassifyLineBadge(string lineText)
+        {
+            var t = lineText.TrimStart();
+            if (t.Length == 0) return ' ';
+            if (CurrentMarkdownFull())
+            {
+                if (System.Text.RegularExpressions.Regex.IsMatch(t, @"^#{1,6}\s")) return '#';
+                if (t[0] == '#') return ' ';                     // directive (#md, #if, …)
+                if (t.Contains(":=") || t.Contains('$')) return 'f';
+                return ' ';                                      // prose
+            }
+            if (t[0] == '\'' || t[0] == '"') return ' ';         // classic comment/title = text
+            if (t[0] == '#') return ' ';
+            return 'f';                                          // classic default = calculation
+        }
 
         // Inserts text at the caret. A '‸' marks where the caret should land; any selected text
         // is placed at that marker (so e.g. "**‸**" wraps the selection in bold).
@@ -1222,7 +1241,7 @@ namespace Calcpad.Avalonia
 
             bar.Children.Add(new Border { Width = 10 });
             var calc = MakeButton("↔ Calc", ToggleCalc);
-            ToolTip.SetTip(calc, "Toggle the line or selection between prose/text and a calculation");
+            ToolTip.SetTip(calc, "Ctrl+=  ·  Toggle line/selection between prose and a calculation.\nPicks the lightest delimiter: assignment → :=, bare expression → $…$.");
             bar.Children.Add(calc);
 
             _formatBar.Child = bar;
@@ -1256,12 +1275,19 @@ namespace Calcpad.Avalonia
             string replacement;
             if (CurrentMarkdownFull())
             {
+                var Rx = System.Text.RegularExpressions.Regex.IsMatch(body, @"^[A-Za-z_]\w*\s*(?:\([^)]*\))?\s*=(?!=)");
+                // Shape-aware: pick the lightest delimiter so the user never types $$ by hand.
                 if (body.StartsWith("$$") && body.EndsWith("$$") && body.Length >= 4)
-                    replacement = body.Substring(2, body.Length - 4).Trim();
+                    replacement = body.Substring(2, body.Length - 4).Trim();                       // calc → prose
                 else if (body.StartsWith("$") && body.EndsWith("$") && body.Length >= 2)
-                    replacement = body.Substring(1, body.Length - 2).Trim();
+                    replacement = body.Substring(1, body.Length - 2).Trim();                        // calc → prose
+                else if (body.Contains(":="))
+                    replacement = System.Text.RegularExpressions.Regex.Replace(body, @"\s*:=\s*", " = "); // calc assignment → prose
+                else if (Rx)
+                    replacement = System.Text.RegularExpressions.Regex.Replace(body,
+                        @"^(\s*[A-Za-z_]\w*(?:\([^)]*\))?\s*)=(?!=)\s*", "$1:= ");                  // prose assignment → calc (:=)
                 else
-                    replacement = "$" + body + "$";
+                    replacement = "$" + body + "$";                                                 // bare expression → inline math
             }
             else
             {
