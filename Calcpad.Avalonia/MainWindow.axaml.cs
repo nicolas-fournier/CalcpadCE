@@ -731,10 +731,10 @@ namespace Calcpad.Avalonia
             return 'f';                                          // classic default = calculation
         }
 
-        // Always open (not toggle) the inline table editor, seeded from the current line.
+        // Always open (not toggle) the table editor, seeded from the current line.
         private void OpenTableEditor()
         {
-            try { BuildTableEditorInline(); PositionTableOverlay(); _tableOverlay.IsVisible = true; }
+            try { BuildTableEditorInline(); _tableOverlay.IsVisible = true; }
             catch (Exception ex) { _status.Text = "Table editor failed: " + ex.Message; }
         }
 
@@ -1396,28 +1396,8 @@ namespace Calcpad.Avalonia
         private void ToggleTableEditor()
         {
             if (_tableOverlay.IsVisible) { _tableOverlay.IsVisible = false; return; }
-            try { BuildTableEditorInline(); PositionTableOverlay(); _tableOverlay.IsVisible = true; }
+            try { BuildTableEditorInline(); _tableOverlay.IsVisible = true; }
             catch (Exception ex) { _status.Text = "Table editor failed: " + ex.Message; }
-        }
-
-        // Places the table editor inside the code editor. For an EXISTING table it sits right on the
-        // table's first line (covering it, so it reads as replacing the table); for a new insert it
-        // sits just under the caret line.
-        private void PositionTableOverlay()
-        {
-            double y = 24;
-            try
-            {
-                var tv = _editor.TextArea.TextView;
-                tv.EnsureVisualLines();
-                if (_tableSeedStart >= 1)
-                    y = tv.GetVisualTopByDocumentLine(_tableSeedStart) - tv.VerticalOffset; // over the table
-                else
-                    y = tv.GetVisualTopByDocumentLine(_editor.TextArea.Caret.Line) + tv.DefaultLineHeight - tv.VerticalOffset + 2;
-                if (y < 0) y = 0;
-            }
-            catch { /* fall back to a sensible default */ }
-            _tableOverlay.Margin = new global::Avalonia.Thickness(36, y, 8, 8);
         }
 
         private void BuildTableEditorInline()

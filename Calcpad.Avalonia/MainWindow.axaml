@@ -130,19 +130,16 @@
                         VerticalScrollBarVisibility="Disabled" Background="#F3F4F6">
             <StackPanel x:Name="TabStrip" Orientation="Horizontal" Height="26"/>
           </ScrollViewer>
-          <Grid>
-            <aedit:TextEditor x:Name="Editor"
-                              FontFamily="Cascadia Code,Consolas,Menlo,monospace"
-                              FontSize="13"
-                              ShowLineNumbers="True"
-                              HorizontalScrollBarVisibility="Auto"
-                              VerticalScrollBarVisibility="Auto"/>
-            <!-- Inline table editor: floats over the code at the current line -->
-            <Border x:Name="TableOverlay" IsVisible="False"
-                    HorizontalAlignment="Left" VerticalAlignment="Top" MaxWidth="660"
-                    Background="#FBFBFC" BorderBrush="#9AA1AC" BorderThickness="1"
-                    CornerRadius="4" Padding="6" BoxShadow="0 3 12 0 #35000000"/>
-          </Grid>
+          <!-- Table editor: docked below the code (no overlap); the code stays visible above -->
+          <Border x:Name="TableOverlay" DockPanel.Dock="Bottom" IsVisible="False"
+                  Background="#FBFBFC" BorderBrush="#E2E4E8" BorderThickness="0,1,0,0"
+                  Padding="6,4" MaxHeight="280"/>
+          <aedit:TextEditor x:Name="Editor"
+                            FontFamily="Cascadia Code,Consolas,Menlo,monospace"
+                            FontSize="13"
+                            ShowLineNumbers="True"
+                            HorizontalScrollBarVisibility="Auto"
+                            VerticalScrollBarVisibility="Auto"/>
         </DockPanel>
       </Border>
 
