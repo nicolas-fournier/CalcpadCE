@@ -128,6 +128,7 @@ namespace Calcpad.Avalonia
             LoadHighlighting();
             InitHoverTooltips();
             InitCompletion();
+            InitTableEditor();
             InitLineNumberToggle();
             try { _editor.TextArea.LeftMargins.Add(new CalcGutterMargin(ClassifyLineBadge, ToggleLineByOffset)); } catch { }
             BuildEditorContextMenu();
@@ -731,12 +732,6 @@ namespace Calcpad.Avalonia
             return 'f';                                          // classic default = calculation
         }
 
-        // Always open (not toggle) the table editor, seeded from the current line.
-        private void OpenTableEditor()
-        {
-            try { BuildTableEditorInline(); _tableOverlay.IsVisible = true; }
-            catch (Exception ex) { _status.Text = "Table editor failed: " + ex.Message; }
-        }
 
         // Inserts text at the caret. A '‸' marks where the caret should land; any selected text
         // is placed at that marker (so e.g. "**‸**" wraps the selection in bold).
@@ -1389,78 +1384,107 @@ namespace Calcpad.Avalonia
             InsertAtCaret(fr.Call + "\n");
         }
 
-        // ---- Inline visual table editor (paste from Excel / quick data entry → matrix or md table) ----
+        // ---- Docked table editor: follows the caret onto a table, two-way bound, Excel-like nav ----
 
-        // Toggles the inline table-editor strip. When opening, it seeds from the current line if that
-        // line is a matrix (so it edits/replaces it), otherwise it starts with a blank 3×3 grid.
-        private void ToggleTableEditor()
+        private bool _tableActive, _tableInsertMode, _tableSyncing, _tableMarkdown;
+        private int _tableStartLine = -1, _tableEndLine = -1;
+        private string _tableName = "A";
+        private Border _tableGridHost = null!;
+        private readonly System.Collections.Generic.List<System.Collections.Generic.List<string>> _tableData = new();
+        private readonly System.Collections.Generic.List<System.Collections.Generic.List<TextBox>> _tableCells = new();
+
+        private void InitTableEditor()
         {
-            if (_tableOverlay.IsVisible) { _tableOverlay.IsVisible = false; return; }
-            try { BuildTableEditorInline(); _tableOverlay.IsVisible = true; }
-            catch (Exception ex) { _status.Text = "Table editor failed: " + ex.Message; }
+            _editor.TextArea.Caret.PositionChanged += (_, _) => { try { OnCaretTableFollow(); } catch { } };
+            _editor.Document.Changed += (_, _) => { try { OnTableDocumentChanged(); } catch { } };
         }
 
-        private void BuildTableEditorInline()
+        // The ⊞ button / "Insert table…" / "Edit table…" / gutter-badge entry point.
+        private void OpenTableEditor()
         {
-            var markdown = CurrentMarkdownFull();
+            var info = DetectTableAtCaret();
+            if (info is { } t) OpenBoundTable(t); else OpenInsertTable();
+        }
+
+        private void ToggleTableEditor()
+        {
+            if (_tableOverlay.IsVisible) { CloseTableEditor(); return; }
+            OpenTableEditor();
+        }
+
+        // Caret moved: bind the editor to the table under the caret, or close it when off tables.
+        private void OnCaretTableFollow()
+        {
+            if (_tableSyncing || _tableInsertMode || _switching) return;
+            var info = DetectTableAtCaret();
+            if (info is not { } t) { if (_tableActive) CloseTableEditor(); return; }
+            if (_tableActive && t.start == _tableStartLine && t.end == _tableEndLine) return; // same table
+            OpenBoundTable(t);
+        }
+
+        // Raw-text edit to the bound table (focus NOT in the grid) → refresh the grid from the text.
+        private void OnTableDocumentChanged()
+        {
+            if (_tableSyncing || !_tableActive || _switching) return;
+            var focused = global::Avalonia.Controls.TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() as global::Avalonia.Visual;
+            if (focused is not null && global::Avalonia.VisualTree.VisualExtensions.IsVisualAncestorOf(_tableOverlay, focused)) return; // grid is the source
+            var info = DetectTableAtCaret();
+            if (info is { } t) OpenBoundTable(t); else CloseTableEditor();
+        }
+
+        private (int start, int end, bool md, string name, System.Collections.Generic.List<System.Collections.Generic.List<string>> data)? DetectTableAtCaret()
+        {
             var data = new System.Collections.Generic.List<System.Collections.Generic.List<string>>();
-            var seedName = TrySeedTableFromLine(data);
-            if (data.Count == 0)
-                for (int r = 0; r < 3; r++)
-                { var row = new System.Collections.Generic.List<string>(); for (int c = 0; c < 3; c++) row.Add(""); data.Add(row); }
+            var name = TrySeedTableFromLine(data); // sets _tableSeedStart/_tableSeedEnd/_tableSeedMarkdown
+            if (_tableSeedStart < 1) return null;
+            return (_tableSeedStart, _tableSeedEnd, _tableSeedMarkdown, name ?? "A", data);
+        }
 
-            var nameBox = new TextBox { Text = seedName ?? "A", Width = 90 };
-            var gridHost = new Border();
-            var cells = new System.Collections.Generic.List<System.Collections.Generic.List<TextBox>>();
+        private void OpenBoundTable((int start, int end, bool md, string name, System.Collections.Generic.List<System.Collections.Generic.List<string>> data) t)
+        {
+            _tableActive = true; _tableInsertMode = false;
+            _tableStartLine = t.start; _tableEndLine = t.end; _tableMarkdown = t.md; _tableName = t.name;
+            _tableData.Clear();
+            foreach (var r in t.data) _tableData.Add(new System.Collections.Generic.List<string>(r));
+            BuildTablePanel(bound: true);
+            _tableOverlay.IsVisible = true;
+        }
 
-            void Render()
-            {
-                cells.Clear();
-                var g = new Grid();
-                var cols = data.Count == 0 ? 0 : data[0].Count;
-                for (int c = 0; c < cols; c++) g.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
-                for (int r = 0; r < data.Count; r++) g.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-                for (int r = 0; r < data.Count; r++)
-                {
-                    var rowList = new System.Collections.Generic.List<TextBox>();
-                    for (int c = 0; c < data[r].Count; c++)
-                    {
-                        var tb = new TextBox { Text = data[r][c], MinWidth = 54, Margin = new global::Avalonia.Thickness(1), Padding = new global::Avalonia.Thickness(3, 1) };
-                        Grid.SetRow(tb, r); Grid.SetColumn(tb, c);
-                        g.Children.Add(tb); rowList.Add(tb);
-                    }
-                    cells.Add(rowList);
-                }
-                gridHost.Child = new ScrollViewer
-                {
-                    Content = g, MaxHeight = 170,
-                    HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto
-                };
-            }
-            void Sync()
-            {
-                for (int r = 0; r < cells.Count && r < data.Count; r++)
-                    for (int c = 0; c < cells[r].Count && c < data[r].Count; c++)
-                        data[r][c] = cells[r][c].Text ?? "";
-            }
-            Render();
+        private void OpenInsertTable()
+        {
+            _tableActive = false; _tableInsertMode = true;
+            _tableStartLine = _tableEndLine = -1; _tableMarkdown = false; _tableName = "A";
+            _tableData.Clear();
+            for (int r = 0; r < 3; r++) { var row = new System.Collections.Generic.List<string>(); for (int c = 0; c < 3; c++) row.Add(""); _tableData.Add(row); }
+            BuildTablePanel(bound: false);
+            _tableOverlay.IsVisible = true;
+        }
 
-            Button Tool(string label, Action act)
-            { var b = new Button { Content = label, Margin = new global::Avalonia.Thickness(1), Padding = new global::Avalonia.Thickness(5, 1) }; b.Click += (_, _) => act(); return b; }
+        private void CloseTableEditor()
+        {
+            _tableActive = false; _tableInsertMode = false;
+            _tableStartLine = _tableEndLine = -1;
+            _tableOverlay.IsVisible = false;
+        }
 
-            string Output()
-            {
-                Sync();
-                var name = string.IsNullOrWhiteSpace(nameBox.Text) ? "A" : nameBox.Text.Trim();
-                return fmtMarkdown() ? BuildMarkdownTable(data) : BuildMatrix(name, data, markdown);
-            }
+        private void BuildTablePanel(bool bound)
+        {
+            var nameBox = new TextBox { Text = _tableName, Width = 90 };
+            nameBox.TextChanged += (_, _) => { _tableName = string.IsNullOrWhiteSpace(nameBox.Text) ? "A" : nameBox.Text.Trim(); if (_tableActive) CommitTableToDocument(); };
 
             var fmt = new ComboBox { Width = 200, VerticalAlignment = VerticalAlignment.Center };
             fmt.Items.Add(new ComboBoxItem { Content = "Calcpad matrix  [a;b|c;d]" });
             fmt.Items.Add(new ComboBoxItem { Content = "Markdown table" });
-            fmt.SelectedIndex = _tableSeedMarkdown ? 1 : 0; // match the seeded table's kind
-            bool fmtMarkdown() => fmt.SelectedIndex == 1;
+            fmt.SelectedIndex = _tableMarkdown ? 1 : 0;
+            fmt.SelectionChanged += (_, _) => { _tableMarkdown = fmt.SelectedIndex == 1; if (_tableActive) CommitTableToDocument(); };
+
+            _tableGridHost = new Border();
+            RenderTableGrid();
+
+            Button Tool(string label, Action act)
+            { var b = new Button { Content = label, Margin = new global::Avalonia.Thickness(1), Padding = new global::Avalonia.Thickness(5, 1) }; b.Click += (_, _) => act(); return b; }
+
+            void Structural(Action change) { SyncCells(); change(); RenderTableGrid(); if (_tableActive) CommitTableToDocument(); }
 
             var row1 = new WrapPanel { Orientation = Orientation.Horizontal };
             row1.Children.Add(new TextBlock { Text = "Name", VerticalAlignment = VerticalAlignment.Center, Margin = new global::Avalonia.Thickness(0, 0, 4, 0) });
@@ -1468,36 +1492,126 @@ namespace Calcpad.Avalonia
             row1.Children.Add(new TextBlock { Text = "as", VerticalAlignment = VerticalAlignment.Center, Margin = new global::Avalonia.Thickness(8, 0, 4, 0) });
             row1.Children.Add(fmt);
             row1.Children.Add(new Border { Width = 10 });
-            row1.Children.Add(Tool("+ Row", () => { Sync(); var c = data.Count > 0 ? data[0].Count : 1; var row = new System.Collections.Generic.List<string>(); for (int i = 0; i < c; i++) row.Add(""); data.Add(row); Render(); }));
-            row1.Children.Add(Tool("− Row", () => { Sync(); if (data.Count > 1) { data.RemoveAt(data.Count - 1); Render(); } }));
-            row1.Children.Add(Tool("+ Col", () => { Sync(); foreach (var row in data) row.Add(""); Render(); }));
-            row1.Children.Add(Tool("− Col", () => { Sync(); if (data.Count > 0 && data[0].Count > 1) { foreach (var row in data) row.RemoveAt(row.Count - 1); Render(); } }));
-            row1.Children.Add(Tool("📋 Paste (Excel)", async () => { Sync(); await PasteGridAsync(data); Render(); }));
-            row1.Children.Add(Tool("Clear", () => { foreach (var row in data) for (int c = 0; c < row.Count; c++) row[c] = ""; Render(); }));
+            row1.Children.Add(Tool("+ Row", () => Structural(() => { var c = _tableData.Count > 0 ? _tableData[0].Count : 1; var row = new System.Collections.Generic.List<string>(); for (int i = 0; i < c; i++) row.Add(""); _tableData.Add(row); })));
+            row1.Children.Add(Tool("− Row", () => Structural(() => { if (_tableData.Count > 1) _tableData.RemoveAt(_tableData.Count - 1); })));
+            row1.Children.Add(Tool("+ Col", () => Structural(() => { foreach (var row in _tableData) row.Add(""); })));
+            row1.Children.Add(Tool("− Col", () => Structural(() => { if (_tableData.Count > 0 && _tableData[0].Count > 1) foreach (var row in _tableData) row.RemoveAt(row.Count - 1); })));
+            row1.Children.Add(Tool("📋 Paste (Excel)", async () => { SyncCells(); await PasteGridAsync(_tableData); RenderTableGrid(); if (_tableActive) CommitTableToDocument(); }));
+            row1.Children.Add(Tool("Clear", () => Structural(() => { foreach (var row in _tableData) for (int c = 0; c < row.Count; c++) row[c] = ""; })));
 
             var row2 = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new global::Avalonia.Thickness(0, 2, 0, 0) };
-            row2.Children.Add(Tool("Insert at caret", () => { InsertAtCaret(Output()); _tableOverlay.IsVisible = false; }));
-            if (_tableSeedStart >= 1)
-                row2.Children.Add(Tool("Replace table", () =>
+            if (!bound)
+                row2.Children.Add(Tool("Insert at caret", () =>
                 {
-                    var outText = Output().TrimEnd('\n');
-                    var doc = _editor.Document;
-                    if (_tableSeedStart <= doc.LineCount && _tableSeedEnd <= doc.LineCount)
-                    {
-                        var ls = doc.GetLineByNumber(_tableSeedStart);
-                        var le = doc.GetLineByNumber(_tableSeedEnd);
-                        doc.Replace(ls.Offset, le.EndOffset - ls.Offset, outText);
-                    }
-                    _tableOverlay.IsVisible = false;
+                    SyncCells();
+                    var outText = _tableMarkdown ? BuildMarkdownTable(_tableData) : BuildMatrix(_tableName, _tableData, CurrentMarkdownFull());
+                    InsertAtCaret(outText);
+                    CloseTableEditor();
                 }));
-            row2.Children.Add(Tool("Close", () => _tableOverlay.IsVisible = false));
-            row2.Children.Add(new TextBlock { Text = "Copy a range in Excel, then Paste (Excel). Empty cells → 0 in a matrix.", FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new global::Avalonia.Thickness(8, 0, 0, 0), Foreground = new SolidColorBrush(Color.Parse("#6B7280")) });
+            row2.Children.Add(Tool("Close", CloseTableEditor));
+            row2.Children.Add(new TextBlock
+            {
+                Text = bound ? "Bound to the table — edits apply live (undoable). Tab / Enter / arrows to move." : "Tab / Enter to move. Paste from Excel, then Insert.",
+                FontSize = 11, VerticalAlignment = VerticalAlignment.Center,
+                Margin = new global::Avalonia.Thickness(8, 0, 0, 0), Foreground = new SolidColorBrush(Color.Parse("#6B7280"))
+            });
 
             var panel = new StackPanel { Orientation = Orientation.Vertical, Spacing = 3 };
             panel.Children.Add(row1);
-            panel.Children.Add(gridHost);
+            panel.Children.Add(_tableGridHost);
             panel.Children.Add(row2);
             _tableOverlay.Child = panel;
+        }
+
+        private void RenderTableGrid()
+        {
+            if (_tableGridHost is null) return;
+            _tableCells.Clear();
+            var g = new Grid();
+            var cols = _tableData.Count == 0 ? 0 : _tableData.Max(r => r.Count);
+            for (int c = 0; c < cols; c++) g.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+            for (int r = 0; r < _tableData.Count; r++) g.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+            for (int r = 0; r < _tableData.Count; r++)
+            {
+                var rowList = new System.Collections.Generic.List<TextBox>();
+                for (int c = 0; c < _tableData[r].Count; c++)
+                {
+                    int rr = r, cc = c;
+                    var tb = new TextBox { Text = _tableData[r][c], MinWidth = 54, Height = 22, MinHeight = 0, Margin = new global::Avalonia.Thickness(1), Padding = new global::Avalonia.Thickness(3, 1) };
+                    tb.LostFocus += (_, _) => { if (rr < _tableData.Count && cc < _tableData[rr].Count) { _tableData[rr][cc] = tb.Text ?? ""; if (_tableActive) CommitTableToDocument(); } };
+                    tb.KeyDown += (_, e) => OnCellKey(e, rr, cc);
+                    Grid.SetRow(tb, r); Grid.SetColumn(tb, c);
+                    g.Children.Add(tb); rowList.Add(tb);
+                }
+                _tableCells.Add(rowList);
+            }
+            _tableGridHost.Child = new ScrollViewer
+            {
+                Content = g, MaxHeight = 180,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+            };
+        }
+
+        private void SyncCells()
+        {
+            for (int r = 0; r < _tableCells.Count && r < _tableData.Count; r++)
+                for (int c = 0; c < _tableCells[r].Count && c < _tableData[r].Count; c++)
+                    _tableData[r][c] = _tableCells[r][c].Text ?? "";
+        }
+
+        // Excel-like navigation: Enter → down, Tab → right (Shift+Tab left), arrows → up/down.
+        private void OnCellKey(global::Avalonia.Input.KeyEventArgs e, int r, int c)
+        {
+            if (r < _tableCells.Count && c < _tableCells[r].Count) _tableData[r][c] = _tableCells[r][c].Text ?? "";
+            var cols = _tableData.Count > 0 ? _tableData[0].Count : 0;
+            if (e.Key == Key.Enter) { e.Handled = true; FocusCell(r + 1, c, addRow: true); }
+            else if (e.Key == Key.Tab)
+            {
+                e.Handled = true;
+                if (e.KeyModifiers.HasFlag(global::Avalonia.Input.KeyModifiers.Shift))
+                { if (c > 0) FocusCell(r, c - 1, false); else if (r > 0) FocusCell(r - 1, cols - 1, false); }
+                else { if (c + 1 < cols) FocusCell(r, c + 1, false); else FocusCell(r + 1, 0, addRow: true); }
+            }
+            else if (e.Key == Key.Up && r > 0) { e.Handled = true; FocusCell(r - 1, c, false); }
+            else if (e.Key == Key.Down) { e.Handled = true; FocusCell(r + 1, c, addRow: false); }
+        }
+
+        private void FocusCell(int r, int c, bool addRow)
+        {
+            if (r >= _tableData.Count)
+            {
+                if (!addRow) return;
+                var cols = _tableData.Count > 0 ? _tableData[0].Count : 1;
+                var row = new System.Collections.Generic.List<string>(); for (int i = 0; i < cols; i++) row.Add("");
+                _tableData.Add(row);
+                RenderTableGrid();
+                if (_tableActive) CommitTableToDocument();
+            }
+            if (r < 0 || r >= _tableCells.Count || c < 0 || c >= _tableCells[r].Count) return;
+            var tb = _tableCells[r][c];
+            tb.Focus();
+            tb.SelectAll();
+        }
+
+        // Writes the grid back to the document table range (undoable). Guarded so it doesn't retrigger
+        // the caret/document handlers (which would rebuild the grid and steal focus mid-edit).
+        private void CommitTableToDocument()
+        {
+            if (!_tableActive || _tableStartLine < 1) return;
+            SyncCells();
+            var doc = _editor.Document;
+            if (_tableStartLine > doc.LineCount || _tableEndLine > doc.LineCount) return;
+            var newText = (_tableMarkdown ? BuildMarkdownTable(_tableData) : BuildMatrix(_tableName, _tableData, CurrentMarkdownFull())).TrimEnd('\n');
+            var ls = doc.GetLineByNumber(_tableStartLine);
+            var le = doc.GetLineByNumber(_tableEndLine);
+            var current = doc.GetText(ls.Offset, le.EndOffset - ls.Offset);
+            if (newText == current) return;
+            _tableSyncing = true;
+            try { doc.Replace(ls.Offset, le.EndOffset - ls.Offset, newText); }
+            catch { /* offsets shifted — the follow handler will re-bind */ }
+            finally { _tableSyncing = false; }
+            _tableEndLine = _tableStartLine + newText.Split('\n').Length - 1; // row count may have changed
         }
 
         // Fills the grid model from the clipboard: TSV (Excel) or CSV, one row per line.
