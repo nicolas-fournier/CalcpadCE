@@ -208,7 +208,10 @@ namespace Calcpad.Avalonia
             public bool Dirty;
             // When the tab represents a .cpdz package, show the package name, not the extracted worksheet.cpd.
             public string? DisplayName;
+            public string? PackagePath;   // the .cpdz on disk, when this tab is a package
             public string Title => DisplayName ?? (Path is null ? "untitled" : System.IO.Path.GetFileName(Path));
+            // The real file on disk this tab maps to (the package, or the plain worksheet).
+            public string? DiskPath => PackagePath ?? Path;
         }
 
         // Opens the path in an existing tab if already open, otherwise a new tab.
@@ -278,6 +281,7 @@ namespace Calcpad.Avalonia
                 };
                 var captured = doc;
                 tab.PointerPressed += (_, _) => ActivateDoc(captured);
+                tab.ContextMenu = BuildTabContextMenu(captured);
                 _tabStrip.Children.Add(tab);
             }
         }
@@ -286,6 +290,126 @@ namespace Calcpad.Avalonia
         {
             // Cheap: only the active tab's dirty marker changes on a keystroke.
             RebuildTabs();
+        }
+
+        // ---- Tab right-click menu: copy path, rename, reveal in Explorer ----
+
+        private ContextMenu BuildTabContextMenu(OpenDoc doc)
+        {
+            var menu = new ContextMenu();
+            var items = new List<object>();
+
+            var copy = new MenuItem { Header = "Copy full path" };
+            copy.Click += async (_, _) => await CopyTabPath(doc);
+
+            var rename = new MenuItem { Header = "Rename…" };
+            rename.Click += async (_, _) => await RenameTabFile(doc);
+
+            var reveal = new MenuItem { Header = "Open in Explorer" };
+            reveal.Click += (_, _) => RevealInExplorer(doc);
+
+            var hasFile = !string.IsNullOrEmpty(doc.DiskPath);
+            copy.IsEnabled = rename.IsEnabled = reveal.IsEnabled = hasFile;
+
+            items.Add(copy);
+            items.Add(rename);
+            items.Add(reveal);
+            menu.ItemsSource = items;
+            return menu;
+        }
+
+        private async System.Threading.Tasks.Task CopyTabPath(OpenDoc doc)
+        {
+            var path = doc.DiskPath;
+            if (string.IsNullOrEmpty(path)) { _status.Text = "This tab has no file yet — save it first"; return; }
+            var cb = global::Avalonia.Controls.TopLevel.GetTopLevel(this)?.Clipboard;
+            if (cb is not null) { await cb.SetTextAsync(path); _status.Text = "Copied path: " + path; }
+        }
+
+        private void RevealInExplorer(OpenDoc doc)
+        {
+            var path = doc.DiskPath;
+            if (string.IsNullOrEmpty(path) || !File.Exists(path)) { _status.Text = "File not found on disk"; return; }
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = $"/select,\"{path}\"",
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex) { _status.Text = "Open in Explorer failed: " + ex.Message; }
+        }
+
+        private async System.Threading.Tasks.Task RenameTabFile(OpenDoc doc)
+        {
+            var path = doc.DiskPath;
+            if (string.IsNullOrEmpty(path)) { _status.Text = "Save the file before renaming it"; return; }
+            if (!File.Exists(path)) { _status.Text = "File not found on disk"; return; }
+
+            var newName = await PromptText("Rename file", "New file name:", Path.GetFileName(path));
+            if (string.IsNullOrWhiteSpace(newName)) return;
+            newName = newName.Trim();
+            if (string.Equals(newName, Path.GetFileName(path), StringComparison.Ordinal)) return;
+            if (newName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) { _status.Text = "Invalid file name"; return; }
+
+            var dir = Path.GetDirectoryName(path)!;
+            // Keep the original extension if the user didn't type one.
+            if (string.IsNullOrEmpty(Path.GetExtension(newName)))
+                newName += Path.GetExtension(path);
+            var dest = Path.Combine(dir, newName);
+            if (File.Exists(dest)) { _status.Text = "A file with that name already exists"; return; }
+
+            try
+            {
+                File.Move(path, dest);
+                // Re-point this tab at the renamed file.
+                if (string.Equals(doc.PackagePath, path, StringComparison.OrdinalIgnoreCase))
+                {
+                    doc.PackagePath = dest;
+                    doc.DisplayName = Path.GetFileName(dest);
+                    if (ReferenceEquals(doc, _active)) _packagePath = dest;
+                }
+                else
+                {
+                    doc.Path = dest;
+                    if (ReferenceEquals(doc, _active)) _currentFile = dest;
+                }
+                AddRecent(dest);
+                RebuildTabs();
+                UpdateTitle();
+                _status.Text = "Renamed to " + Path.GetFileName(dest);
+            }
+            catch (Exception ex) { _status.Text = "Rename failed: " + ex.Message; }
+        }
+
+        // Small modal text-input dialog (Avalonia has no built-in prompt).
+        private async System.Threading.Tasks.Task<string?> PromptText(string title, string label, string initial)
+        {
+            var box = new TextBox { Text = initial, MinWidth = 320 };
+            var body = new StackPanel { Margin = new global::Avalonia.Thickness(16), Spacing = 10, MinWidth = 340 };
+            body.Children.Add(new TextBlock { Text = label });
+            body.Children.Add(box);
+            var ok = new Button { Content = "OK", MinWidth = 72, IsDefault = true };
+            var cancel = new Button { Content = "Cancel", MinWidth = 72, IsCancel = true };
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
+            buttons.Children.Add(ok); buttons.Children.Add(cancel);
+            body.Children.Add(buttons);
+            var dlg = new Window
+            {
+                Title = title,
+                SizeToContent = SizeToContent.Height,
+                Width = 380,
+                CanResize = false,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Content = body
+            };
+            ok.Click += (_, _) => dlg.Close(true);
+            cancel.Click += (_, _) => dlg.Close(false);
+            box.AttachedToVisualTree += (_, _) => { box.SelectAll(); box.Focus(); };
+            var accepted = await dlg.ShowDialog<bool>(this);
+            return accepted ? box.Text : null;
         }
 
         private void OnKeyDown(object? sender, KeyEventArgs e)
@@ -1522,6 +1646,7 @@ namespace Calcpad.Avalonia
                     _state = JsonSerializer.Deserialize<AppState>(File.ReadAllText(StateFile)) ?? new AppState();
             }
             catch { _state = new AppState(); }
+            _state.RecentFiles ??= new(); // old state files won't have the field
             _useTemplate = _state.UseTemplate;
         }
 
@@ -1583,7 +1708,7 @@ namespace Calcpad.Avalonia
                 }
                 items.Add(new Separator());
                 var clear = new MenuItem { Header = "_Clear recent" };
-                clear.Click += (_, _) => { _state.RecentFiles.Clear(); SaveState(); BuildRecentMenu(); };
+                clear.Click += (_, _) => { _state.RecentFiles!.Clear(); SaveState(); BuildRecentMenu(); };
                 items.Add(clear);
             }
             _recentMenu.ItemsSource = items;
@@ -2790,7 +2915,7 @@ namespace Calcpad.Avalonia
             OpenOrActivate(wsPath, text);        // loads into a tab; _currentFile = extracted worksheet.cpd
             _packagePath = zipPath;
             _packageWorkDir = workDir;
-            if (_active is not null) _active.DisplayName = Path.GetFileName(zipPath); // tab shows the .cpdz name
+            if (_active is not null) { _active.DisplayName = Path.GetFileName(zipPath); _active.PackagePath = zipPath; } // tab shows the .cpdz name
             RebuildTabs();
             if (cfg is not null) ApplyConfigJson(cfg);
             UpdateTitle();
