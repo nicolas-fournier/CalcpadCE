@@ -4,7 +4,9 @@
         xmlns:webview="clr-namespace:WebViewControl;assembly=WebViewControl.Avalonia"
         x:Class="Calcpad.Avalonia.MainWindow"
         Width="1180" Height="780"
+        MinWidth="900" MinHeight="600"
         FontSize="12"
+        RequestedThemeVariant="Light"
         Title="CalcpadCE (Avalonia preview)">
 
   <!-- Compact density: tighter controls throughout -->
@@ -37,11 +39,11 @@
     <!-- Menu -->
     <Menu DockPanel.Dock="Top">
       <MenuItem Header="_File">
-        <MenuItem Header="_New" Click="New_Click"/>
-        <MenuItem Header="_Open…" Click="Open_Click"/>
+        <MenuItem Header="_New" Click="New_Click" InputGesture="Ctrl+N"/>
+        <MenuItem Header="_Open…" Click="Open_Click" InputGesture="Ctrl+O"/>
         <Separator/>
-        <MenuItem Header="_Save" Click="Save_Click"/>
-        <MenuItem Header="Save _As…" Click="SaveAs_Click"/>
+        <MenuItem Header="_Save" Click="Save_Click" InputGesture="Ctrl+S"/>
+        <MenuItem Header="Save _As…" Click="SaveAs_Click" InputGesture="Ctrl+Shift+S"/>
         <Separator/>
         <MenuItem Header="Export _HTML…" Click="ExportHtml_Click"/>
         <MenuItem Header="Export _Word (.docx)…" Click="ExportDocx_Click"/>
@@ -54,7 +56,7 @@
         <MenuItem Header="Toggle _AI assistant" Click="ToggleAi_Click"/>
         <MenuItem Header="Toggle _autocomplete" Click="ToggleCompletion_Click"/>
         <Separator/>
-        <MenuItem Header="Show _preview" Click="Run_Click"/>
+        <MenuItem Header="Show _preview" Click="Run_Click" InputGesture="F5"/>
         <MenuItem Header="Show _help" Click="ShowHelp_Click"/>
       </MenuItem>
       <MenuItem Header="_Help">

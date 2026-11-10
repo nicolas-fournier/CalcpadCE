@@ -352,6 +352,24 @@ namespace Calcpad.Avalonia
         private const string ColSnip = "#7C3AED";  // snippets (purple)
         private const string ColDir = "#B2379B";   // directives (magenta)
 
+        // After inserting a variable via completion: if the line is a pure math expression (no
+        // prose) and not already a calculation, wrap it in $…$ so it is evaluated. Prose lines
+        // (multiple words) are left alone.
+        private void ConvertLineToCalcIfExpression()
+        {
+            if (!CurrentMarkdownFull()) return;
+            var line = _editor.Document.GetLineByOffset(_editor.CaretOffset);
+            var text = _editor.Document.GetText(line.Offset, line.Length).Trim();
+            if (text.Length == 0 || text[0] == '#' || text.Contains('$')) return; // directive / already math
+            // A pure expression: identifier/number operands joined only by math operators.
+            if (!System.Text.RegularExpressions.Regex.IsMatch(text,
+                    @"^[\wµΩ°.]+(\s*[-+*/^().|]\s*[\wµΩ°.]+)*\s*$"))
+                return; // looks like prose — leave it
+            _editor.CaretOffset = line.Offset;
+            _editor.SelectionLength = 0;
+            ToggleCalc(); // wraps the current line in $…$
+        }
+
         // Typing a math operator (= / * + -) on a markdown prose line proposes converting it to
         // a calculation — but only when there is an operand before the operator (so markdown
         // lists '- ' and bold '**' don't trigger it).
@@ -396,10 +414,13 @@ namespace Calcpad.Avalonia
                 return list;
             }
 
-            // Our worksheet variables/functions FIRST (highest priority, orange).
+            // Our worksheet variables/functions FIRST (highest priority, orange), with their doc.
+            // Inserting one on a plain (non-calc) expression line converts the line to a calc.
             foreach (var name in CollectDefinedNames())
                 list.Add(new CompletionData(name, priority: 100,
-                    description: "defined in this worksheet", content: name + "  —  variable", colorHex: ColVar));
+                    description: DescribeUserSymbol(name) ?? "defined in this worksheet",
+                    content: name + "  —  variable", colorHex: ColVar,
+                    postComplete: ConvertLineToCalcIfExpression));
 
             // Units (green).
             foreach (var u in CalcpadGlossary.UnitNames)
@@ -411,10 +432,11 @@ namespace Calcpad.Avalonia
                 list.Add(new CompletionData(fn, fn + "(", priority: 30,
                     description: CalcpadGlossary.Describe(fn) ?? "function", content: fn + "  —  function", colorHex: ColFunc));
 
-            // Mode-aware snippets (purple).
+            // Mode-aware snippets (purple). Priority above units/functions so a snippet wins its
+            // own exact trigger on Tab (e.g. 'var' snippet beats the 'VAR' volt-amp-reactive unit).
             foreach (var sn in CalcpadSnippets.ForMode(CurrentMarkdownFull()))
                 list.Add(new CompletionData(sn.Key, sn.Body, description: sn.Title + "\n\n" + sn.Body,
-                    priority: 20, content: $"{sn.Key}  —  {sn.Title}", colorHex: ColSnip));
+                    priority: 50, content: $"{sn.Key}  —  {sn.Title}", colorHex: ColSnip));
 
             return list;
         }

@@ -3,23 +3,22 @@
   <Color name="Comment"  foreground="#5A6678" />
   <Color name="Title"    foreground="#1B2330" fontWeight="bold" />
   <Color name="Keyword"  foreground="#B2379B" fontWeight="bold" />
-  <Color name="Number"   foreground="#C2410C" />
+  <Color name="Number"   foreground="#475569" />
   <Color name="Function" foreground="#1F7FAE" />
   <Color name="MathCode" foreground="#0C8F73" />
   <Color name="Unit"     foreground="#16A34A" />
   <Color name="Variable" foreground="#C2410C" fontWeight="bold" />
 
   <RuleSet ignoreCase="true">
-    <!-- single-quoted text comment -->
-    <Span color="Comment">
-      <Begin>'</Begin>
-      <End>'</End>
-    </Span>
-    <!-- double-quoted title -->
-    <Span color="Title">
-      <Begin>"</Begin>
-      <End>"</End>
-    </Span>
+    <!-- single-quoted text comment: only a ' at line start or after whitespace (so prose
+         apostrophes like "it's" are not mistaken for a comment) -->
+    <Rule color="Comment">
+      (?&lt;=^|\s)'[^']*'?
+    </Rule>
+    <!-- double-quoted title: likewise anchored to line start or whitespace -->
+    <Rule color="Title">
+      (?&lt;=^|\s)"[^"]*"?
+    </Rule>
     <!-- inline math / code `expr` -->
     <Span color="MathCode">
       <Begin>`</Begin>

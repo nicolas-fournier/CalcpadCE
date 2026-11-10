@@ -13,13 +13,16 @@ namespace Calcpad.Avalonia
     {
         private readonly string _insert;
         private readonly Action? _action;
+        private readonly Action? _postComplete;
 
         public CompletionData(string text, string? insert = null, string? description = null,
-            double priority = 0, string? content = null, string? colorHex = null, Action? action = null)
+            double priority = 0, string? content = null, string? colorHex = null,
+            Action? action = null, Action? postComplete = null)
         {
             Text = text;
             _insert = insert ?? text;
             _action = action;
+            _postComplete = postComplete;
             Description = description ?? string.Empty;
             Priority = priority;
 
@@ -39,6 +42,7 @@ namespace Calcpad.Avalonia
         {
             if (_action is not null) { _action(); return; } // run an action instead of inserting text
             textArea.Document.Replace(completionSegment, _insert);
+            _postComplete?.Invoke();
         }
     }
 }
