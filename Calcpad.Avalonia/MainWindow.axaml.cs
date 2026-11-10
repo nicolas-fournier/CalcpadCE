@@ -1012,7 +1012,7 @@ namespace Calcpad.Avalonia
             {
                 Watermark = "ANTHROPIC_API_KEY",
                 PasswordChar = '•',
-                Text = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY") ?? _state.ApiKey ?? string.Empty,
+                Text = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY") ?? DecryptKey(_state.ApiKey) ?? string.Empty,
                 FontSize = 11, MinHeight = 0, Padding = new global::Avalonia.Thickness(4, 2),
                 Margin = new global::Avalonia.Thickness(0, 0, 0, 3)
             };
@@ -1142,7 +1142,7 @@ namespace Calcpad.Avalonia
             AppendAi($"**You:** {prompt}\n\n");
             // Inject the CURRENT worksheet once via the system prompt (regenerated every send),
             // so the model always sees the latest state without stale copies piling up in history.
-            var options = new AiOptions { ApiKey = key, SystemPrompt = CalcpadSystemPrompt.Default + "\n\n" + WorksheetContext() };
+            var options = new AiOptions { ApiKey = key, SystemPrompt = CalcpadSystemPrompt.Default + "\n\n" + SvgGuidance + "\n\n" + WorksheetContext() };
 
             try
             {
@@ -1257,11 +1257,48 @@ namespace Calcpad.Avalonia
             catch (Exception ex) { return "error: " + ex.Message; }
         }
 
+        // Tells the assistant it can embed diagrams: Calcpad renders inline SVG in the worksheet.
+        private const string SvgGuidance =
+            "DIAGRAMS: Calcpad renders inline SVG directly in the worksheet and exports it to HTML/Word/PDF. " +
+            "When a sketch would clarify the principle (free-body diagram, geometry, beam/section, circuit, " +
+            "vector/force layout), include a small inline `<svg …>…</svg>` (with viewBox and width/height) right " +
+            "where it helps, with short text labels (<text>) for the quantities. Keep it clean and to scale; " +
+            "prefer lines/polylines/circles/text over heavy styling. Put the SVG on its own line in the worksheet.";
+
         private void SaveApiKey()
         {
-            var key = _aiKey?.Text?.Trim();
-            var val = string.IsNullOrEmpty(key) ? null : key;
-            if (val != _state.ApiKey) { _state.ApiKey = val; SaveState(); }
+            var key = string.IsNullOrWhiteSpace(_aiKey?.Text) ? null : _aiKey!.Text.Trim();
+            if (key == DecryptKey(_state.ApiKey)) return; // unchanged
+            _state.ApiKey = EncryptKey(key);
+            SaveState();
+        }
+
+        // DPAPI (Windows, per-user) encrypts the stored key; a "dpapi:" prefix marks encrypted values.
+        private static string? EncryptKey(string? key)
+        {
+            if (string.IsNullOrEmpty(key)) return null;
+            if (!OperatingSystem.IsWindows()) return key; // DPAPI is Windows-only
+            try
+            {
+                var enc = System.Security.Cryptography.ProtectedData.Protect(
+                    Encoding.UTF8.GetBytes(key), null, System.Security.Cryptography.DataProtectionScope.CurrentUser);
+                return "dpapi:" + Convert.ToBase64String(enc);
+            }
+            catch { return key; }
+        }
+
+        private static string? DecryptKey(string? stored)
+        {
+            if (string.IsNullOrEmpty(stored)) return null;
+            if (!stored.StartsWith("dpapi:", StringComparison.Ordinal)) return stored; // plaintext (old) / non-Windows
+            if (!OperatingSystem.IsWindows()) return null;
+            try
+            {
+                var bytes = Convert.FromBase64String(stored.Substring(6));
+                return Encoding.UTF8.GetString(System.Security.Cryptography.ProtectedData.Unprotect(
+                    bytes, null, System.Security.Cryptography.DataProtectionScope.CurrentUser));
+            }
+            catch { return null; }
         }
 
         // The assistant proposes a COMPLETE new worksheet; the bar shows a before/after diff, and the
@@ -1321,11 +1358,18 @@ namespace Calcpad.Avalonia
 
         private void ApplyProposal()
         {
-            if (string.IsNullOrEmpty(_pendingProposal)) return;
-            _editor.Document.Replace(0, _editor.Document.TextLength, _pendingProposal); // full replace, undoable
-            AppendAi("\n\n✓ *Applied — the worksheet was updated (Ctrl+Z to revert).*\n\n");
+            var text = _pendingProposal;
             _pendingProposal = null;
-            if (_aiProposalBar is not null) _aiProposalBar.IsVisible = false;
+            if (_aiProposalBar is not null) _aiProposalBar.IsVisible = false; // always clear the bar
+            if (string.IsNullOrEmpty(text)) return;
+            try
+            {
+                _editor.Document.Replace(0, _editor.Document.TextLength, text); // full replace, undoable
+                _editor.CaretOffset = 0;
+                AppendAi("\n\n✓ *Applied — the worksheet was updated (Ctrl+Z to revert).*\n\n");
+                ScheduleRender();
+            }
+            catch (Exception ex) { _status.Text = "Apply failed: " + ex.Message; }
         }
 
         private void DismissProposal()
@@ -2921,8 +2965,16 @@ namespace Calcpad.Avalonia
                 if (file is null) return;
                 await File.WriteAllTextAsync(file.Path.LocalPath, BuildPage(_lastHtml), new UTF8Encoding(false));
                 _status.Text = "Exported " + Path.GetFileName(file.Path.LocalPath);
+                OpenExported(file.Path.LocalPath);
             }
             catch (Exception ex) { _status.Text = "Export failed: " + ex.Message; }
+        }
+
+        // Opens an exported file in its default application.
+        private void OpenExported(string path)
+        {
+            try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
+            catch (Exception ex) { _status.Text = "Exported, but couldn't open it: " + ex.Message; }
         }
 
         private async void TemplateSetup_Click(object? sender, RoutedEventArgs e)
@@ -2974,6 +3026,7 @@ namespace Calcpad.Avalonia
                 _status.Text = templatePath is null
                     ? "Exported " + Path.GetFileName(dest)
                     : $"Exported {Path.GetFileName(dest)}  ·  template {Path.GetFileName(templatePath)}";
+                OpenExported(dest);
             }
             catch (Exception ex) { _status.Text = "Export failed: " + ex.Message; }
         }

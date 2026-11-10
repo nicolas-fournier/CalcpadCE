@@ -27,6 +27,8 @@
     <PackageReference Include="Tmds.DBus.Protocol" Version="0.21.3" />
     <!-- Renders the AI assistant's replies (and chat) as markdown. -->
     <PackageReference Include="Markdown.Avalonia" Version="11.0.3" />
+    <!-- DPAPI (Windows) to encrypt the stored API key. -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.0" />
   </ItemGroup>
 
   <ItemGroup>
