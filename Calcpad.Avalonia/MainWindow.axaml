@@ -92,6 +92,10 @@
     <Border x:Name="FormatBar" DockPanel.Dock="Top" Background="#FFFFFF"
             BorderBrush="#E2E4E8" BorderThickness="0,0,0,1" Padding="6,2"/>
 
+    <!-- Inline table editor (collapsible, toggled by the ⊞ Table button) -->
+    <Border x:Name="TableHost" DockPanel.Dock="Top" Background="#FBFBFC"
+            BorderBrush="#E2E4E8" BorderThickness="0,0,0,1" Padding="6,4" IsVisible="False"/>
+
     <!-- Options bar (very bottom) -->
     <Border x:Name="OptionsBar" DockPanel.Dock="Bottom" Background="#F3F4F6"
             BorderBrush="#E2E4E8" BorderThickness="0,1,0,0" Padding="6,2"/>

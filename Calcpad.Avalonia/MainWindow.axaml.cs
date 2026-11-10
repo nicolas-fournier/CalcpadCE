@@ -49,6 +49,7 @@ namespace Calcpad.Avalonia
         private readonly MenuItem _snippetsMenu;
         private readonly Border _keypadHost;
         private WrapPanel? _keypadVars;   // the keypad's live Variables column
+        private Border _tableHost = null!; // inline table editor host (collapsible)
         private readonly Border _formatBar;
         private readonly Border _filePanel;
         private readonly TreeView _fileTree;
@@ -107,6 +108,7 @@ namespace Calcpad.Avalonia
             _snippetsMenu = this.FindControl<MenuItem>("SnippetsMenu")!;
             _keypadHost = this.FindControl<Border>("KeypadHost")!;
             _formatBar = this.FindControl<Border>("FormatBar")!;
+            _tableHost = this.FindControl<Border>("TableHost")!;
             _filePanel = this.FindControl<Border>("FilePanel")!;
             _fileTree = this.FindControl<TreeView>("FileTree")!;
             _optionsBar = this.FindControl<Border>("OptionsBar")!;
@@ -1336,15 +1338,25 @@ namespace Calcpad.Avalonia
             InsertAtCaret(fr.Call + "\n");
         }
 
-        // ---- Visual table editor (paste from Excel / quick data entry → matrix or markdown table) ----
+        // ---- Inline visual table editor (paste from Excel / quick data entry → matrix or md table) ----
 
-        private async System.Threading.Tasks.Task ShowTableEditorAsync()
+        // Toggles the inline table-editor strip. When opening, it seeds from the current line if that
+        // line is a matrix (so it edits/replaces it), otherwise it starts with a blank 3×3 grid.
+        private void ToggleTableEditor()
         {
-          try
-          {
+            if (_tableHost.IsVisible) { _tableHost.IsVisible = false; return; }
+            try { BuildTableEditorInline(); _tableHost.IsVisible = true; }
+            catch (Exception ex) { _status.Text = "Table editor failed: " + ex.Message; }
+        }
+
+        private void BuildTableEditorInline()
+        {
             var markdown = CurrentMarkdownFull();
             var data = new System.Collections.Generic.List<System.Collections.Generic.List<string>>();
             var seedName = TrySeedTableFromLine(data);
+            var seedLineNumber = seedName is not null
+                ? _editor.Document.GetLineByOffset(_editor.CaretOffset).LineNumber
+                : -1;
             if (data.Count == 0)
                 for (int r = 0; r < 3; r++)
                 { var row = new System.Collections.Generic.List<string>(); for (int c = 0; c < 3; c++) row.Add(""); data.Add(row); }
@@ -1365,7 +1377,7 @@ namespace Calcpad.Avalonia
                     var rowList = new System.Collections.Generic.List<TextBox>();
                     for (int c = 0; c < data[r].Count; c++)
                     {
-                        var tb = new TextBox { Text = data[r][c], MinWidth = 58, Margin = new global::Avalonia.Thickness(1), Padding = new global::Avalonia.Thickness(3, 1) };
+                        var tb = new TextBox { Text = data[r][c], MinWidth = 54, Margin = new global::Avalonia.Thickness(1), Padding = new global::Avalonia.Thickness(3, 1) };
                         Grid.SetRow(tb, r); Grid.SetColumn(tb, c);
                         g.Children.Add(tb); rowList.Add(tb);
                     }
@@ -1373,7 +1385,7 @@ namespace Calcpad.Avalonia
                 }
                 gridHost.Child = new ScrollViewer
                 {
-                    Content = g, MaxHeight = 320, MaxWidth = 620,
+                    Content = g, MaxHeight = 170,
                     HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
                     VerticalScrollBarVisibility = ScrollBarVisibility.Auto
                 };
@@ -1387,59 +1399,55 @@ namespace Calcpad.Avalonia
             Render();
 
             Button Tool(string label, Action act)
-            { var b = new Button { Content = label, Margin = new global::Avalonia.Thickness(1) }; b.Click += (_, _) => act(); return b; }
+            { var b = new Button { Content = label, Margin = new global::Avalonia.Thickness(1), Padding = new global::Avalonia.Thickness(5, 1) }; b.Click += (_, _) => act(); return b; }
 
-            var tools = new WrapPanel { Orientation = Orientation.Horizontal };
-            tools.Children.Add(Tool("+ Row", () => { Sync(); var c = data.Count > 0 ? data[0].Count : 1; var row = new System.Collections.Generic.List<string>(); for (int i = 0; i < c; i++) row.Add(""); data.Add(row); Render(); }));
-            tools.Children.Add(Tool("− Row", () => { Sync(); if (data.Count > 1) { data.RemoveAt(data.Count - 1); Render(); } }));
-            tools.Children.Add(Tool("+ Col", () => { Sync(); foreach (var row in data) row.Add(""); Render(); }));
-            tools.Children.Add(Tool("− Col", () => { Sync(); if (data.Count > 0 && data[0].Count > 1) { foreach (var row in data) row.RemoveAt(row.Count - 1); Render(); } }));
-            tools.Children.Add(Tool("📋 Paste (Excel)", async () => { Sync(); await PasteGridAsync(data); Render(); }));
-            tools.Children.Add(Tool("Clear", () => { foreach (var row in data) for (int c = 0; c < row.Count; c++) row[c] = ""; Render(); }));
+            string Output()
+            {
+                Sync();
+                var name = string.IsNullOrWhiteSpace(nameBox.Text) ? "A" : nameBox.Text.Trim();
+                return fmtMarkdown() ? BuildMarkdownTable(data) : BuildMatrix(name, data, markdown);
+            }
 
-            var fmt = new ComboBox { Width = 210 };
+            var fmt = new ComboBox { Width = 200, VerticalAlignment = VerticalAlignment.Center };
             fmt.Items.Add(new ComboBoxItem { Content = "Calcpad matrix  [a;b|c;d]" });
             fmt.Items.Add(new ComboBoxItem { Content = "Markdown table" });
             fmt.SelectedIndex = 0;
+            bool fmtMarkdown() => fmt.SelectedIndex == 1;
 
-            var topRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            topRow.Children.Add(new TextBlock { Text = "Name", VerticalAlignment = VerticalAlignment.Center });
-            topRow.Children.Add(nameBox);
-            topRow.Children.Add(new TextBlock { Text = "Insert as", VerticalAlignment = VerticalAlignment.Center, Margin = new global::Avalonia.Thickness(10, 0, 0, 0) });
-            topRow.Children.Add(fmt);
+            var row1 = new WrapPanel { Orientation = Orientation.Horizontal };
+            row1.Children.Add(new TextBlock { Text = "Name", VerticalAlignment = VerticalAlignment.Center, Margin = new global::Avalonia.Thickness(0, 0, 4, 0) });
+            row1.Children.Add(nameBox);
+            row1.Children.Add(new TextBlock { Text = "as", VerticalAlignment = VerticalAlignment.Center, Margin = new global::Avalonia.Thickness(8, 0, 4, 0) });
+            row1.Children.Add(fmt);
+            row1.Children.Add(new Border { Width = 10 });
+            row1.Children.Add(Tool("+ Row", () => { Sync(); var c = data.Count > 0 ? data[0].Count : 1; var row = new System.Collections.Generic.List<string>(); for (int i = 0; i < c; i++) row.Add(""); data.Add(row); Render(); }));
+            row1.Children.Add(Tool("− Row", () => { Sync(); if (data.Count > 1) { data.RemoveAt(data.Count - 1); Render(); } }));
+            row1.Children.Add(Tool("+ Col", () => { Sync(); foreach (var row in data) row.Add(""); Render(); }));
+            row1.Children.Add(Tool("− Col", () => { Sync(); if (data.Count > 0 && data[0].Count > 1) { foreach (var row in data) row.RemoveAt(row.Count - 1); Render(); } }));
+            row1.Children.Add(Tool("📋 Paste (Excel)", async () => { Sync(); await PasteGridAsync(data); Render(); }));
+            row1.Children.Add(Tool("Clear", () => { foreach (var row in data) for (int c = 0; c < row.Count; c++) row[c] = ""; Render(); }));
 
-            var insert = new Button { Content = "Insert", MinWidth = 72 };
-            var cancel = new Button { Content = "Cancel", MinWidth = 72 };
-            var btns = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
-            btns.Children.Add(insert); btns.Children.Add(cancel);
+            var row2 = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new global::Avalonia.Thickness(0, 2, 0, 0) };
+            row2.Children.Add(Tool("Insert at caret", () => { InsertAtCaret(Output()); _tableHost.IsVisible = false; }));
+            if (seedLineNumber >= 1)
+                row2.Children.Add(Tool("Replace line", () =>
+                {
+                    var outText = Output().TrimEnd('\n');
+                    if (seedLineNumber <= _editor.Document.LineCount)
+                    {
+                        var dl = _editor.Document.GetLineByNumber(seedLineNumber);
+                        _editor.Document.Replace(dl.Offset, dl.Length, outText);
+                    }
+                    _tableHost.IsVisible = false;
+                }));
+            row2.Children.Add(Tool("Close", () => _tableHost.IsVisible = false));
+            row2.Children.Add(new TextBlock { Text = "Copy a range in Excel, then Paste (Excel). Empty cells → 0 in a matrix.", FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new global::Avalonia.Thickness(8, 0, 0, 0), Foreground = new SolidColorBrush(Color.Parse("#6B7280")) });
 
-            var panel = new StackPanel { Margin = new global::Avalonia.Thickness(14), Spacing = 8, MinWidth = 440 };
-            panel.Children.Add(topRow);
-            panel.Children.Add(tools);
+            var panel = new StackPanel { Orientation = Orientation.Vertical, Spacing = 3 };
+            panel.Children.Add(row1);
             panel.Children.Add(gridHost);
-            panel.Children.Add(new TextBlock { Text = "Tip: copy a range in Excel, then “Paste (Excel)”. Empty cells become 0 in a matrix.", FontSize = 11, Foreground = new SolidColorBrush(Color.Parse("#6B7280")), TextWrapping = global::Avalonia.Media.TextWrapping.Wrap });
-            panel.Children.Add(btns);
-
-            var dlg = new Window
-            {
-                Title = "Table editor",
-                SizeToContent = SizeToContent.WidthAndHeight,
-                CanResize = true,
-                WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                Content = panel
-            };
-            insert.Click += (_, _) => dlg.Close(true);
-            cancel.Click += (_, _) => dlg.Close(false);
-
-            var ok = await dlg.ShowDialog<bool>(this);
-            if (!ok) return;
-            Sync();
-
-            var name = string.IsNullOrWhiteSpace(nameBox.Text) ? "A" : nameBox.Text.Trim();
-            var outText = fmt.SelectedIndex == 1 ? BuildMarkdownTable(data) : BuildMatrix(name, data, markdown);
-            InsertAtCaret(outText);
-          }
-          catch (Exception ex) { _status.Text = "Table editor failed: " + ex.Message; }
+            panel.Children.Add(row2);
+            _tableHost.Child = panel;
         }
 
         // Fills the grid model from the clipboard: TSV (Excel) or CSV, one row per line.
@@ -1661,8 +1669,8 @@ namespace Calcpad.Avalonia
             bar.Children.Add(calc);
 
             bar.Children.Add(new Border { Width = 10 });
-            var table = MakeButton("⊞ Table…", async () => await ShowTableEditorAsync());
-            ToolTip.SetTip(table, "Visual grid: paste from Excel or type data, insert as a Calcpad matrix or a markdown table");
+            var table = MakeButton("⊞ Table", ToggleTableEditor);
+            ToolTip.SetTip(table, "Inline grid: paste from Excel or type data, insert/replace as a Calcpad matrix or a markdown table");
             bar.Children.Add(table);
 
             _formatBar.Child = bar;
