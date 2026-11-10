@@ -596,7 +596,7 @@ namespace Calcpad.Avalonia
             Item("Paste", () => _editor.Paste(), "Ctrl+V");
             menu.Items.Add(new Separator());
             Item("Toggle ↔ Calc", ToggleCalc);
-            Item("Insert table…", ToggleTableEditor);
+            var tableItem = Item("Insert table…", OpenTableEditor);
             Item("Go to definition", GoToDefinition, "F12");
             Item("Insert function reference…", () => { if (_selectedTag is FunctionRef fr) _ = InsertFunction(fr); else _status.Text = "Select a function in the Files panel"; });
             menu.Items.Add(new Separator());
@@ -604,7 +604,23 @@ namespace Calcpad.Avalonia
             Item("Redo", () => _editor.Redo(), "Ctrl+Y");
             Item("Select all", () => _editor.SelectAll(), "Ctrl+A");
 
+            // "Edit table…" when the clicked line is a table, else "Insert table…".
+            menu.Opening += (_, _) =>
+                tableItem.Header = ClassifyLineBadge(CaretLineText()) == 't' ? "Edit table…" : "Insert table…";
+
             _editor.ContextMenu = menu;
+
+            // Right-click moves the caret to the click position so the menu reflects that line.
+            _editor.TextArea.AddHandler(global::Avalonia.Input.InputElement.PointerPressedEvent,
+                (object? _, global::Avalonia.Input.PointerPressedEventArgs e) =>
+                {
+                    if (e.GetCurrentPoint(_editor.TextArea).Properties.IsRightButtonPressed)
+                    {
+                        var pos = _editor.GetPositionFromPoint(e.GetPosition(_editor.TextArea.TextView));
+                        if (pos.HasValue) { _editor.CaretOffset = _editor.Document.GetOffset(pos.Value.Location); _editor.SelectionLength = 0; }
+                    }
+                },
+                global::Avalonia.Interactivity.RoutingStrategies.Tunnel);
         }
 
         // ---- Hover tooltips (units / functions / constants) ----
@@ -676,19 +692,33 @@ namespace Calcpad.Avalonia
         private static bool IsWordChar(char c)
             => char.IsLetterOrDigit(c) || c == '_' || "µΩ°²³".IndexOf(c) >= 0;
 
-        // Clicking a gutter badge toggles that line between calc and prose.
+        // Clicking a gutter badge opens the table editor on a table line, else toggles calc/prose.
         private void ToggleLineByOffset(int offset)
         {
             _editor.CaretOffset = Math.Clamp(offset, 0, _editor.Document.TextLength);
             _editor.SelectionLength = 0;
+            if (ClassifyLineBadge(CaretLineText()) == 't') { OpenTableEditor(); return; }
             ToggleCalc();
         }
 
-        // Gutter badge classification: 'f' = calculation, '#' = heading, ' ' = prose/directive.
+        private string CaretLineText()
+        {
+            var l = _editor.Document.GetLineByOffset(_editor.CaretOffset);
+            return _editor.Document.GetText(l.Offset, l.Length);
+        }
+
+        private static readonly System.Text.RegularExpressions.Regex MatrixLineRegex =
+            new(@"^[A-Za-z_]\w*\s*:?=\s*\[.*\]\s*$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        private static bool IsTableLine(string trimmed) =>
+            trimmed.StartsWith("|") || MatrixLineRegex.IsMatch(trimmed);
+
+        // Gutter badge: 't' = table, 'f' = calculation, '#' = heading, ' ' = prose/directive.
         private char ClassifyLineBadge(string lineText)
         {
             var t = lineText.TrimStart();
             if (t.Length == 0) return ' ';
+            if (IsTableLine(t)) return 't';                      // matrix [..|..] or markdown | .. |
             if (CurrentMarkdownFull())
             {
                 if (System.Text.RegularExpressions.Regex.IsMatch(t, @"^#{1,6}\s")) return '#';
@@ -699,6 +729,13 @@ namespace Calcpad.Avalonia
             if (t[0] == '\'' || t[0] == '"') return ' ';         // classic comment/title = text
             if (t[0] == '#') return ' ';
             return 'f';                                          // classic default = calculation
+        }
+
+        // Always open (not toggle) the inline table editor, seeded from the current line.
+        private void OpenTableEditor()
+        {
+            try { BuildTableEditorInline(); PositionTableOverlay(); _tableOverlay.IsVisible = true; }
+            catch (Exception ex) { _status.Text = "Table editor failed: " + ex.Message; }
         }
 
         // Inserts text at the caret. A '‸' marks where the caret should land; any selected text
@@ -1363,7 +1400,9 @@ namespace Calcpad.Avalonia
             catch (Exception ex) { _status.Text = "Table editor failed: " + ex.Message; }
         }
 
-        // Places the floating table editor just under the current line inside the code editor.
+        // Places the table editor inside the code editor. For an EXISTING table it sits right on the
+        // table's first line (covering it, so it reads as replacing the table); for a new insert it
+        // sits just under the caret line.
         private void PositionTableOverlay()
         {
             double y = 24;
@@ -1371,8 +1410,10 @@ namespace Calcpad.Avalonia
             {
                 var tv = _editor.TextArea.TextView;
                 tv.EnsureVisualLines();
-                var top = tv.GetVisualTopByDocumentLine(_editor.TextArea.Caret.Line);
-                y = top + tv.DefaultLineHeight - tv.VerticalOffset + 2;
+                if (_tableSeedStart >= 1)
+                    y = tv.GetVisualTopByDocumentLine(_tableSeedStart) - tv.VerticalOffset; // over the table
+                else
+                    y = tv.GetVisualTopByDocumentLine(_editor.TextArea.Caret.Line) + tv.DefaultLineHeight - tv.VerticalOffset + 2;
                 if (y < 0) y = 0;
             }
             catch { /* fall back to a sensible default */ }

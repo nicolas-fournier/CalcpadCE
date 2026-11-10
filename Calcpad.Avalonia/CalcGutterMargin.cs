@@ -18,6 +18,7 @@ namespace Calcpad.Avalonia
         private readonly Typeface _typeface = new("Segoe UI");
         private static readonly IBrush CalcBrush = new SolidColorBrush(Color.Parse("#16A34A"));
         private static readonly IBrush HeadBrush = new SolidColorBrush(Color.Parse("#B2379B"));
+        private static readonly IBrush TableBrush = new SolidColorBrush(Color.Parse("#1F7FAE"));
 
         public CalcGutterMargin(Func<string, char> classify, Action<int> toggleLineByOffset)
         {
@@ -75,8 +76,8 @@ namespace Calcpad.Avalonia
                 var badge = _classify(text);
                 if (badge == ' ') continue;
 
-                var glyph = badge == '#' ? "#" : "ƒ"; // ƒ
-                var brush = badge == '#' ? HeadBrush : CalcBrush;
+                var glyph = badge switch { '#' => "#", 't' => "⊞", _ => "ƒ" };
+                var brush = badge switch { '#' => HeadBrush, 't' => TableBrush, _ => CalcBrush };
                 var ft = new FormattedText(glyph, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
                     _typeface, 11, brush);
                 context.DrawText(ft, new Point(4, vl.VisualTop - tv.VerticalOffset + 1));
