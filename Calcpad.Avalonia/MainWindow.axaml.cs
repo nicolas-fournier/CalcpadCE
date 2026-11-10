@@ -1336,6 +1336,166 @@ namespace Calcpad.Avalonia
             InsertAtCaret(fr.Call + "\n");
         }
 
+        // ---- Visual table editor (paste from Excel / quick data entry → matrix or markdown table) ----
+
+        private async System.Threading.Tasks.Task ShowTableEditorAsync()
+        {
+          try
+          {
+            var markdown = CurrentMarkdownFull();
+            var data = new System.Collections.Generic.List<System.Collections.Generic.List<string>>();
+            var seedName = TrySeedTableFromLine(data);
+            if (data.Count == 0)
+                for (int r = 0; r < 3; r++)
+                { var row = new System.Collections.Generic.List<string>(); for (int c = 0; c < 3; c++) row.Add(""); data.Add(row); }
+
+            var nameBox = new TextBox { Text = seedName ?? "A", Width = 90 };
+            var gridHost = new Border();
+            var cells = new System.Collections.Generic.List<System.Collections.Generic.List<TextBox>>();
+
+            void Render()
+            {
+                cells.Clear();
+                var g = new Grid();
+                var cols = data.Count == 0 ? 0 : data[0].Count;
+                for (int c = 0; c < cols; c++) g.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+                for (int r = 0; r < data.Count; r++) g.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+                for (int r = 0; r < data.Count; r++)
+                {
+                    var rowList = new System.Collections.Generic.List<TextBox>();
+                    for (int c = 0; c < data[r].Count; c++)
+                    {
+                        var tb = new TextBox { Text = data[r][c], MinWidth = 58, Margin = new global::Avalonia.Thickness(1), Padding = new global::Avalonia.Thickness(3, 1) };
+                        Grid.SetRow(tb, r); Grid.SetColumn(tb, c);
+                        g.Children.Add(tb); rowList.Add(tb);
+                    }
+                    cells.Add(rowList);
+                }
+                gridHost.Child = new ScrollViewer
+                {
+                    Content = g, MaxHeight = 320, MaxWidth = 620,
+                    HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+                };
+            }
+            void Sync()
+            {
+                for (int r = 0; r < cells.Count && r < data.Count; r++)
+                    for (int c = 0; c < cells[r].Count && c < data[r].Count; c++)
+                        data[r][c] = cells[r][c].Text ?? "";
+            }
+            Render();
+
+            Button Tool(string label, Action act)
+            { var b = new Button { Content = label, Margin = new global::Avalonia.Thickness(1) }; b.Click += (_, _) => act(); return b; }
+
+            var tools = new WrapPanel { Orientation = Orientation.Horizontal };
+            tools.Children.Add(Tool("+ Row", () => { Sync(); var c = data.Count > 0 ? data[0].Count : 1; var row = new System.Collections.Generic.List<string>(); for (int i = 0; i < c; i++) row.Add(""); data.Add(row); Render(); }));
+            tools.Children.Add(Tool("− Row", () => { Sync(); if (data.Count > 1) { data.RemoveAt(data.Count - 1); Render(); } }));
+            tools.Children.Add(Tool("+ Col", () => { Sync(); foreach (var row in data) row.Add(""); Render(); }));
+            tools.Children.Add(Tool("− Col", () => { Sync(); if (data.Count > 0 && data[0].Count > 1) { foreach (var row in data) row.RemoveAt(row.Count - 1); Render(); } }));
+            tools.Children.Add(Tool("📋 Paste (Excel)", async () => { Sync(); await PasteGridAsync(data); Render(); }));
+            tools.Children.Add(Tool("Clear", () => { foreach (var row in data) for (int c = 0; c < row.Count; c++) row[c] = ""; Render(); }));
+
+            var fmt = new ComboBox { Width = 210 };
+            fmt.Items.Add(new ComboBoxItem { Content = "Calcpad matrix  [a;b|c;d]" });
+            fmt.Items.Add(new ComboBoxItem { Content = "Markdown table" });
+            fmt.SelectedIndex = 0;
+
+            var topRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            topRow.Children.Add(new TextBlock { Text = "Name", VerticalAlignment = VerticalAlignment.Center });
+            topRow.Children.Add(nameBox);
+            topRow.Children.Add(new TextBlock { Text = "Insert as", VerticalAlignment = VerticalAlignment.Center, Margin = new global::Avalonia.Thickness(10, 0, 0, 0) });
+            topRow.Children.Add(fmt);
+
+            var insert = new Button { Content = "Insert", MinWidth = 72 };
+            var cancel = new Button { Content = "Cancel", MinWidth = 72 };
+            var btns = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
+            btns.Children.Add(insert); btns.Children.Add(cancel);
+
+            var panel = new StackPanel { Margin = new global::Avalonia.Thickness(14), Spacing = 8, MinWidth = 440 };
+            panel.Children.Add(topRow);
+            panel.Children.Add(tools);
+            panel.Children.Add(gridHost);
+            panel.Children.Add(new TextBlock { Text = "Tip: copy a range in Excel, then “Paste (Excel)”. Empty cells become 0 in a matrix.", FontSize = 11, Foreground = new SolidColorBrush(Color.Parse("#6B7280")), TextWrapping = global::Avalonia.Media.TextWrapping.Wrap });
+            panel.Children.Add(btns);
+
+            var dlg = new Window
+            {
+                Title = "Table editor",
+                SizeToContent = SizeToContent.WidthAndHeight,
+                CanResize = true,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Content = panel
+            };
+            insert.Click += (_, _) => dlg.Close(true);
+            cancel.Click += (_, _) => dlg.Close(false);
+
+            var ok = await dlg.ShowDialog<bool>(this);
+            if (!ok) return;
+            Sync();
+
+            var name = string.IsNullOrWhiteSpace(nameBox.Text) ? "A" : nameBox.Text.Trim();
+            var outText = fmt.SelectedIndex == 1 ? BuildMarkdownTable(data) : BuildMatrix(name, data, markdown);
+            InsertAtCaret(outText);
+          }
+          catch (Exception ex) { _status.Text = "Table editor failed: " + ex.Message; }
+        }
+
+        // Fills the grid model from the clipboard: TSV (Excel) or CSV, one row per line.
+        private async System.Threading.Tasks.Task PasteGridAsync(System.Collections.Generic.List<System.Collections.Generic.List<string>> data)
+        {
+            var top = global::Avalonia.Controls.TopLevel.GetTopLevel(this);
+            var text = top?.Clipboard is null ? null : await top.Clipboard.GetTextAsync();
+            if (string.IsNullOrWhiteSpace(text)) { _status.Text = "Clipboard is empty"; return; }
+            var lines = text.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd('\n').Split('\n');
+            var rows = new System.Collections.Generic.List<System.Collections.Generic.List<string>>();
+            foreach (var ln in lines)
+            {
+                var parts = ln.Contains('\t') ? ln.Split('\t') : ln.Split(',');
+                rows.Add(parts.Select(s => s.Trim()).ToList());
+            }
+            var maxc = rows.Count == 0 ? 0 : rows.Max(r => r.Count);
+            foreach (var r in rows) while (r.Count < maxc) r.Add("");
+            if (rows.Count > 0) { data.Clear(); data.AddRange(rows); }
+        }
+
+        // Seeds the grid from the current line if it's a matrix literal "name (:=|=) [ … ]".
+        // Returns the name, or null if the line isn't a matrix.
+        private string? TrySeedTableFromLine(System.Collections.Generic.List<System.Collections.Generic.List<string>> data)
+        {
+            var line = _editor.Document.GetLineByOffset(_editor.CaretOffset);
+            var text = _editor.Document.GetText(line.Offset, line.Length);
+            var m = System.Text.RegularExpressions.Regex.Match(text, @"^\s*([A-Za-z_]\w*)\s*:?=\s*\[(.+)\]\s*$");
+            if (!m.Success) return null;
+            foreach (var rowStr in m.Groups[2].Value.Split('|'))
+                data.Add(rowStr.Split(';').Select(s => s.Trim()).ToList());
+            var maxc = data.Count == 0 ? 0 : data.Max(r => r.Count);
+            foreach (var r in data) while (r.Count < maxc) r.Add("");
+            return m.Groups[1].Value;
+        }
+
+        private static string BuildMatrix(string name, System.Collections.Generic.List<System.Collections.Generic.List<string>> data, bool markdown)
+        {
+            var rows = data.Where(r => r.Any(c => !string.IsNullOrWhiteSpace(c))).ToList();
+            var body = string.Join(" | ", rows.Select(r =>
+                string.Join("; ", r.Select(c => string.IsNullOrWhiteSpace(c) ? "0" : c.Trim()))));
+            var op = markdown ? ":=" : "=";
+            return $"{name} {op} [{body}]\n";
+        }
+
+        private static string BuildMarkdownTable(System.Collections.Generic.List<System.Collections.Generic.List<string>> data)
+        {
+            if (data.Count == 0) return string.Empty;
+            string Cell(string c) => string.IsNullOrWhiteSpace(c) ? " " : c.Trim();
+            var sb = new StringBuilder();
+            sb.Append("| ").Append(string.Join(" | ", data[0].Select(Cell))).Append(" |\n");
+            sb.Append("| ").Append(string.Join(" | ", data[0].Select(_ => "---"))).Append(" |\n");
+            for (int r = 1; r < data.Count; r++)
+                sb.Append("| ").Append(string.Join(" | ", data[r].Select(Cell))).Append(" |\n");
+            return sb.ToString();
+        }
+
         // If the file lives outside the worksheet's folder, offer to copy it in (and return the
         // local copy's path); otherwise return the path unchanged.
         private async System.Threading.Tasks.Task<string> MaybeCopyIntoFolder(string filePath)
@@ -1499,6 +1659,11 @@ namespace Calcpad.Avalonia
             var calc = MakeButton("↔ Calc", ToggleCalc);
             ToolTip.SetTip(calc, "Ctrl+=  ·  Toggle line/selection between prose and a calculation.\nPicks the lightest delimiter: assignment → :=, bare expression → $…$.");
             bar.Children.Add(calc);
+
+            bar.Children.Add(new Border { Width = 10 });
+            var table = MakeButton("⊞ Table…", async () => await ShowTableEditorAsync());
+            ToolTip.SetTip(table, "Visual grid: paste from Excel or type data, insert as a Calcpad matrix or a markdown table");
+            bar.Children.Add(table);
 
             _formatBar.Child = bar;
         }
