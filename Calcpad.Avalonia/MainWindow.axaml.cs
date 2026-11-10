@@ -113,6 +113,7 @@ namespace Calcpad.Avalonia
             _previewFiles = new[] { Path.Combine(previewDir, "preview-a.html"), Path.Combine(previewDir, "preview-b.html") };
             LoadHighlighting();
             InitHoverTooltips();
+            BuildEditorContextMenu();
             BuildKeypad();
             BuildFormatBar();
             BuildOptionsBar();
@@ -292,6 +293,35 @@ namespace Calcpad.Avalonia
             _debounce.Start();
         }
 
+        // ---- Editor right-click context menu ----
+
+        private void BuildEditorContextMenu()
+        {
+            var menu = new ContextMenu();
+
+            MenuItem Item(string header, Action action, string? gesture = null)
+            {
+                var mi = new MenuItem { Header = header };
+                if (gesture is not null) mi.InputGesture = KeyGesture.Parse(gesture);
+                mi.Click += (_, _) => action();
+                menu.Items.Add(mi);
+                return mi;
+            }
+
+            Item("Cut", () => _editor.Cut(), "Ctrl+X");
+            Item("Copy", () => _editor.Copy(), "Ctrl+C");
+            Item("Paste", () => _editor.Paste(), "Ctrl+V");
+            menu.Items.Add(new Separator());
+            Item("Toggle ↔ Calc", ToggleCalc);
+            Item("Insert function reference…", () => { if (_selectedTag is FunctionRef fr) InsertFunction(fr); else _status.Text = "Select a function in the Files panel"; });
+            menu.Items.Add(new Separator());
+            Item("Undo", () => _editor.Undo(), "Ctrl+Z");
+            Item("Redo", () => _editor.Redo(), "Ctrl+Y");
+            Item("Select all", () => _editor.SelectAll(), "Ctrl+A");
+
+            _editor.ContextMenu = menu;
+        }
+
         // ---- Hover tooltips (units / functions / constants) ----
 
         private void InitHoverTooltips()
@@ -371,7 +401,7 @@ namespace Calcpad.Avalonia
 
         private void BuildKeypad()
         {
-            var root = new StackPanel { Orientation = Orientation.Vertical, Spacing = 4 };
+            var root = new StackPanel { Orientation = Orientation.Vertical, Spacing = 2 };
 
             root.Children.Add(KeyGroup("Numbers",
                 Kp("7", "7"), Kp("8", "8"), Kp("9", "9"), Kp("4", "4"), Kp("5", "5"), Kp("6", "6"),
@@ -425,9 +455,9 @@ namespace Calcpad.Avalonia
             var b = new Button
             {
                 Content = label,
-                MinWidth = 34,
-                Margin = new global::Avalonia.Thickness(2),
-                Padding = new global::Avalonia.Thickness(6, 3),
+                MinWidth = 28,
+                Margin = new global::Avalonia.Thickness(1),
+                Padding = new global::Avalonia.Thickness(4, 1),
                 HorizontalContentAlignment = HorizontalAlignment.Center
             };
             b.Click += (_, _) => onClick();
