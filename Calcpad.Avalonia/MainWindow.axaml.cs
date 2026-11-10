@@ -49,7 +49,7 @@ namespace Calcpad.Avalonia
         private readonly MenuItem _snippetsMenu;
         private readonly Border _keypadHost;
         private WrapPanel? _keypadVars;   // the keypad's live Variables column
-        private Border _tableHost = null!; // inline table editor host (collapsible)
+        private Border _tableOverlay = null!; // inline table editor floating over the code editor
         private readonly Border _formatBar;
         private readonly Border _filePanel;
         private readonly TreeView _fileTree;
@@ -108,7 +108,7 @@ namespace Calcpad.Avalonia
             _snippetsMenu = this.FindControl<MenuItem>("SnippetsMenu")!;
             _keypadHost = this.FindControl<Border>("KeypadHost")!;
             _formatBar = this.FindControl<Border>("FormatBar")!;
-            _tableHost = this.FindControl<Border>("TableHost")!;
+            _tableOverlay = this.FindControl<Border>("TableOverlay")!;
             _filePanel = this.FindControl<Border>("FilePanel")!;
             _fileTree = this.FindControl<TreeView>("FileTree")!;
             _optionsBar = this.FindControl<Border>("OptionsBar")!;
@@ -1344,9 +1344,25 @@ namespace Calcpad.Avalonia
         // line is a matrix (so it edits/replaces it), otherwise it starts with a blank 3×3 grid.
         private void ToggleTableEditor()
         {
-            if (_tableHost.IsVisible) { _tableHost.IsVisible = false; return; }
-            try { BuildTableEditorInline(); _tableHost.IsVisible = true; }
+            if (_tableOverlay.IsVisible) { _tableOverlay.IsVisible = false; return; }
+            try { BuildTableEditorInline(); PositionTableOverlay(); _tableOverlay.IsVisible = true; }
             catch (Exception ex) { _status.Text = "Table editor failed: " + ex.Message; }
+        }
+
+        // Places the floating table editor just under the current line inside the code editor.
+        private void PositionTableOverlay()
+        {
+            double y = 24;
+            try
+            {
+                var tv = _editor.TextArea.TextView;
+                tv.EnsureVisualLines();
+                var top = tv.GetVisualTopByDocumentLine(_editor.TextArea.Caret.Line);
+                y = top + tv.DefaultLineHeight - tv.VerticalOffset + 2;
+                if (y < 0) y = 0;
+            }
+            catch { /* fall back to a sensible default */ }
+            _tableOverlay.Margin = new global::Avalonia.Thickness(36, y, 8, 8);
         }
 
         private void BuildTableEditorInline()
@@ -1428,7 +1444,7 @@ namespace Calcpad.Avalonia
             row1.Children.Add(Tool("Clear", () => { foreach (var row in data) for (int c = 0; c < row.Count; c++) row[c] = ""; Render(); }));
 
             var row2 = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new global::Avalonia.Thickness(0, 2, 0, 0) };
-            row2.Children.Add(Tool("Insert at caret", () => { InsertAtCaret(Output()); _tableHost.IsVisible = false; }));
+            row2.Children.Add(Tool("Insert at caret", () => { InsertAtCaret(Output()); _tableOverlay.IsVisible = false; }));
             if (seedLineNumber >= 1)
                 row2.Children.Add(Tool("Replace line", () =>
                 {
@@ -1438,16 +1454,16 @@ namespace Calcpad.Avalonia
                         var dl = _editor.Document.GetLineByNumber(seedLineNumber);
                         _editor.Document.Replace(dl.Offset, dl.Length, outText);
                     }
-                    _tableHost.IsVisible = false;
+                    _tableOverlay.IsVisible = false;
                 }));
-            row2.Children.Add(Tool("Close", () => _tableHost.IsVisible = false));
+            row2.Children.Add(Tool("Close", () => _tableOverlay.IsVisible = false));
             row2.Children.Add(new TextBlock { Text = "Copy a range in Excel, then Paste (Excel). Empty cells → 0 in a matrix.", FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new global::Avalonia.Thickness(8, 0, 0, 0), Foreground = new SolidColorBrush(Color.Parse("#6B7280")) });
 
             var panel = new StackPanel { Orientation = Orientation.Vertical, Spacing = 3 };
             panel.Children.Add(row1);
             panel.Children.Add(gridHost);
             panel.Children.Add(row2);
-            _tableHost.Child = panel;
+            _tableOverlay.Child = panel;
         }
 
         // Fills the grid model from the clipboard: TSV (Excel) or CSV, one row per line.
