@@ -167,7 +167,10 @@ namespace Calcpad.Avalonia
                 var args = Environment.GetCommandLineArgs();
                 if (args.Length > 1 && File.Exists(args[1]))
                 {
-                    OpenOrActivate(args[1], File.ReadAllText(args[1]).Replace("\r\n", "\n").Replace("\r", "\n"));
+                    if (args[1].EndsWith(CpdPackage.Extension, StringComparison.OrdinalIgnoreCase))
+                        OpenPackage(args[1]); // a .cpdz package passed on the command line
+                    else
+                        OpenOrActivate(args[1], File.ReadAllText(args[1]).Replace("\r\n", "\n").Replace("\r", "\n"));
                     return;
                 }
             }
@@ -329,6 +332,14 @@ namespace Calcpad.Avalonia
                     {
                         _completion.CompletionList.RequestInsertion(e);
                         e.Handled = true;
+                    }
+                    else if (e.Key == Key.V && _completion is null
+                             && (e.KeyModifiers == global::Avalonia.Input.KeyModifiers.Control
+                                 || e.KeyModifiers == global::Avalonia.Input.KeyModifiers.Meta))
+                    {
+                        // Ctrl/Cmd+V: paste an image from the clipboard as a saved <img>, else text.
+                        e.Handled = true;
+                        _ = HandlePasteAsync();
                     }
                 },
                 global::Avalonia.Interactivity.RoutingStrategies.Tunnel);
@@ -1373,9 +1384,6 @@ namespace Calcpad.Avalonia
             var markdown = CurrentMarkdownFull();
             var data = new System.Collections.Generic.List<System.Collections.Generic.List<string>>();
             var seedName = TrySeedTableFromLine(data);
-            var seedLineNumber = seedName is not null
-                ? _editor.Document.GetLineByOffset(_editor.CaretOffset).LineNumber
-                : -1;
             if (data.Count == 0)
                 for (int r = 0; r < 3; r++)
                 { var row = new System.Collections.Generic.List<string>(); for (int c = 0; c < 3; c++) row.Add(""); data.Add(row); }
@@ -1430,7 +1438,7 @@ namespace Calcpad.Avalonia
             var fmt = new ComboBox { Width = 200, VerticalAlignment = VerticalAlignment.Center };
             fmt.Items.Add(new ComboBoxItem { Content = "Calcpad matrix  [a;b|c;d]" });
             fmt.Items.Add(new ComboBoxItem { Content = "Markdown table" });
-            fmt.SelectedIndex = 0;
+            fmt.SelectedIndex = _tableSeedMarkdown ? 1 : 0; // match the seeded table's kind
             bool fmtMarkdown() => fmt.SelectedIndex == 1;
 
             var row1 = new WrapPanel { Orientation = Orientation.Horizontal };
@@ -1448,14 +1456,16 @@ namespace Calcpad.Avalonia
 
             var row2 = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new global::Avalonia.Thickness(0, 2, 0, 0) };
             row2.Children.Add(Tool("Insert at caret", () => { InsertAtCaret(Output()); _tableOverlay.IsVisible = false; }));
-            if (seedLineNumber >= 1)
-                row2.Children.Add(Tool("Replace line", () =>
+            if (_tableSeedStart >= 1)
+                row2.Children.Add(Tool("Replace table", () =>
                 {
                     var outText = Output().TrimEnd('\n');
-                    if (seedLineNumber <= _editor.Document.LineCount)
+                    var doc = _editor.Document;
+                    if (_tableSeedStart <= doc.LineCount && _tableSeedEnd <= doc.LineCount)
                     {
-                        var dl = _editor.Document.GetLineByNumber(seedLineNumber);
-                        _editor.Document.Replace(dl.Offset, dl.Length, outText);
+                        var ls = doc.GetLineByNumber(_tableSeedStart);
+                        var le = doc.GetLineByNumber(_tableSeedEnd);
+                        doc.Replace(ls.Offset, le.EndOffset - ls.Offset, outText);
                     }
                     _tableOverlay.IsVisible = false;
                 }));
@@ -1487,19 +1497,56 @@ namespace Calcpad.Avalonia
             if (rows.Count > 0) { data.Clear(); data.AddRange(rows); }
         }
 
-        // Seeds the grid from the current line if it's a matrix literal "name (:=|=) [ … ]".
-        // Returns the name, or null if the line isn't a matrix.
+        // The line range the table editor was seeded from (1-based, inclusive), for "Replace table".
+        private int _tableSeedStart = -1, _tableSeedEnd = -1;
+        private bool _tableSeedMarkdown;
+
+        // Seeds the grid from an EXISTING table at the caret: a Calcpad matrix line "name (:=|=) [ … ]",
+        // or a markdown table block (contiguous lines starting with '|'). Records the line range so it
+        // can be replaced. Returns the matrix name (null for a markdown table or no table).
         private string? TrySeedTableFromLine(System.Collections.Generic.List<System.Collections.Generic.List<string>> data)
         {
-            var line = _editor.Document.GetLineByOffset(_editor.CaretOffset);
-            var text = _editor.Document.GetText(line.Offset, line.Length);
+            _tableSeedStart = _tableSeedEnd = -1;
+            _tableSeedMarkdown = false;
+            var doc = _editor.Document;
+            var line = doc.GetLineByOffset(_editor.CaretOffset);
+            var text = doc.GetText(line.Offset, line.Length);
+
             var m = System.Text.RegularExpressions.Regex.Match(text, @"^\s*([A-Za-z_]\w*)\s*:?=\s*\[(.+)\]\s*$");
-            if (!m.Success) return null;
-            foreach (var rowStr in m.Groups[2].Value.Split('|'))
-                data.Add(rowStr.Split(';').Select(s => s.Trim()).ToList());
+            if (m.Success)
+            {
+                foreach (var rowStr in m.Groups[2].Value.Split('|'))
+                    data.Add(rowStr.Split(';').Select(s => s.Trim()).ToList());
+                NormalizeGrid(data);
+                _tableSeedStart = _tableSeedEnd = line.LineNumber;
+                return m.Groups[1].Value;
+            }
+
+            string LineText(int n) { var l = doc.GetLineByNumber(n); return doc.GetText(l.Offset, l.Length); }
+            if (text.TrimStart().StartsWith("|"))
+            {
+                int start = line.LineNumber, end = line.LineNumber;
+                while (start > 1 && LineText(start - 1).TrimStart().StartsWith("|")) start--;
+                while (end < doc.LineCount && LineText(end + 1).TrimStart().StartsWith("|")) end++;
+                for (int n = start; n <= end; n++)
+                {
+                    var lt = LineText(n);
+                    // skip a markdown separator row like | --- | --- |
+                    if (lt.Contains('-') && System.Text.RegularExpressions.Regex.IsMatch(lt, @"^\s*\|?[\s:\-|]+\|?\s*$"))
+                        continue;
+                    data.Add(lt.Trim().Trim('|').Split('|').Select(s => s.Trim()).ToList());
+                }
+                NormalizeGrid(data);
+                _tableSeedStart = start; _tableSeedEnd = end; _tableSeedMarkdown = true;
+                return null;
+            }
+            return null;
+        }
+
+        private static void NormalizeGrid(System.Collections.Generic.List<System.Collections.Generic.List<string>> data)
+        {
             var maxc = data.Count == 0 ? 0 : data.Max(r => r.Count);
             foreach (var r in data) while (r.Count < maxc) r.Add("");
-            return m.Groups[1].Value;
         }
 
         private static string BuildMatrix(string name, System.Collections.Generic.List<System.Collections.Generic.List<string>> data, bool markdown)
@@ -2016,6 +2063,12 @@ namespace Calcpad.Avalonia
                 if (t.StartsWith("#def", StringComparison.OrdinalIgnoreCase) && !t.StartsWith("#end def", StringComparison.OrdinalIgnoreCase))
                     inDef = true;
             }
+            // In a markdown worksheet, parse an included CLASSIC library in classic mode so its
+            // top-level definitions (f(x) = …) compute instead of being read as prose. A markdown
+            // library re-enables markdown itself via its own #md directive. (#def macro bodies are
+            // already converted above, since they expand at the markdown call site.)
+            if (markdownMacros && depth == 0)
+                return "#md off\n" + sb.ToString() + "#md full\n";
             return sb.ToString();
         }
 
@@ -2266,6 +2319,100 @@ namespace Calcpad.Avalonia
                 if (_ready) Render();
             }
             catch { /* ignore a bad config */ }
+        }
+
+        // ---- Paste: an image becomes a saved <img>; otherwise plain text ----
+
+        private async System.Threading.Tasks.Task HandlePasteAsync()
+        {
+            try
+            {
+                var cb = global::Avalonia.Controls.TopLevel.GetTopLevel(this)?.Clipboard;
+                if (cb is null) return;
+                var formats = await cb.GetFormatsAsync();
+
+                string? imgFmt = null;
+                foreach (var f in formats)
+                {
+                    var lf = f.ToLowerInvariant();
+                    if (lf.Contains("png")) { imgFmt = f; break; }               // PNG preferred
+                    if (lf is "deviceindependentbitmap" or "dib") imgFmt ??= f;   // else DIB (screenshots)
+                }
+                if (imgFmt is not null)
+                {
+                    var data = await cb.GetDataAsync(imgFmt);
+                    if (data is byte[] bytes && bytes.Length > 0 && await TryInsertPastedImageAsync(bytes, imgFmt))
+                        return;
+                }
+
+                var text = await cb.GetTextAsync();
+                if (!string.IsNullOrEmpty(text))
+                {
+                    var start = _editor.SelectionLength > 0 ? _editor.SelectionStart : _editor.CaretOffset;
+                    _editor.Document.Replace(start, _editor.SelectionLength, text);
+                    _editor.CaretOffset = start + text.Length;
+                }
+            }
+            catch (Exception ex) { _status.Text = "Paste failed: " + ex.Message; }
+        }
+
+        // Saves the pasted image next to the worksheet (or in the open package) and inserts a
+        // relative <img> so it is self-contained — and gets picked up on the next package update.
+        private async System.Threading.Tasks.Task<bool> TryInsertPastedImageAsync(byte[] bytes, string fmt)
+        {
+            try
+            {
+                byte[] png;
+                if (fmt.ToLowerInvariant().Contains("png"))
+                    png = bytes;
+                else
+                {
+                    using var bmpMs = new MemoryStream(DibToBmp(bytes));
+                    using var img = new global::Avalonia.Media.Imaging.Bitmap(bmpMs);
+                    using var outMs = new MemoryStream();
+                    img.Save(outMs);                 // Avalonia encodes PNG
+                    png = outMs.ToArray();
+                }
+
+                var name = "pasted-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff") + ".png";
+                string imagesDir =
+                    _packageWorkDir is not null ? Path.Combine(_packageWorkDir, "Images")
+                    : !string.IsNullOrEmpty(_currentFile) ? Path.Combine(Path.GetDirectoryName(_currentFile)!, "Images")
+                    : Path.Combine(Path.GetTempPath(), "CalcpadAvalonia", "pasted");
+                Directory.CreateDirectory(imagesDir);
+                var full = Path.Combine(imagesDir, name);
+                await File.WriteAllBytesAsync(full, png);
+
+                // Relative to the worksheet (portable / self-contained) when saved; absolute otherwise.
+                var reference = string.IsNullOrEmpty(_currentFile)
+                    ? full.Replace('\\', '/')
+                    : Path.GetRelativePath(Path.GetDirectoryName(_currentFile)!, full).Replace('\\', '/');
+                InsertAtCaret($"<img src=\"{reference}\"/>");
+                _status.Text = _packageWorkDir is not null
+                    ? "Inserted pasted image (saved in package on next Save)"
+                    : "Inserted pasted image → " + reference;
+                return true;
+            }
+            catch { return false; }
+        }
+
+        // Wraps a clipboard DIB (BITMAPINFOHEADER + pixels) into a .bmp byte stream.
+        private static byte[] DibToBmp(byte[] dib)
+        {
+            int headerSize = BitConverter.ToInt32(dib, 0);
+            short bitCount = BitConverter.ToInt16(dib, 14);
+            int compression = BitConverter.ToInt32(dib, 16);
+            int clrUsed = BitConverter.ToInt32(dib, 32);
+            int palette = bitCount <= 8 ? (clrUsed == 0 ? (1 << bitCount) : clrUsed) * 4 : 0;
+            if (compression == 3) palette += 12; // BI_BITFIELDS colour masks
+            int offset = 14 + headerSize + palette;
+            int fileSize = 14 + dib.Length;
+            var bmp = new byte[fileSize];
+            bmp[0] = 0x42; bmp[1] = 0x4D; // "BM"
+            BitConverter.GetBytes(fileSize).CopyTo(bmp, 2);
+            BitConverter.GetBytes(offset).CopyTo(bmp, 10);
+            Array.Copy(dib, 0, bmp, 14, dib.Length);
+            return bmp;
         }
 
         // ---- Make a worksheet self-contained: copy its images/included libraries into its folder ----
