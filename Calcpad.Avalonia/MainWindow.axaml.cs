@@ -1416,7 +1416,8 @@ namespace Calcpad.Avalonia
         private bool _tableFollowQueued;
 
         // Caret moved: bind the editor to the table under the caret, or close it when off tables.
-        // Deferred to the dispatcher so UI changes don't happen re-entrantly during caret/input events.
+        // Deferred to the dispatcher so the UI isn't rebuilt re-entrantly during caret/input events
+        // (which crashes the layout pass when typing in the code). A real click still opens it next frame.
         private void OnCaretTableFollow()
         {
             if (_tableSyncing || _tableInsertMode || _switching || _tableFollowQueued) return;
@@ -1439,8 +1440,11 @@ namespace Calcpad.Avalonia
         // Raw-text edit to the bound table (focus NOT in the grid) → refresh the grid from the text.
         // Deferred to the dispatcher so we don't rebuild the grid's visual tree re-entrantly while the
         // editor is still processing the text change (which can crash the layout pass).
+        private bool _tableSuppressRefresh;
+
         private void OnTableDocumentChanged()
         {
+            if (_tableSuppressRefresh) { _tableSuppressRefresh = false; return; } // our own grid commit
             if (_tableSyncing || !_tableActive || _switching || _tableRefreshQueued) return;
             _tableRefreshQueued = true;
             global::Avalonia.Threading.Dispatcher.UIThread.Post(() =>
@@ -1661,6 +1665,7 @@ namespace Calcpad.Avalonia
             var current = doc.GetText(ls.Offset, le.EndOffset - ls.Offset);
             if (newText == current) return;
             _tableSyncing = true;
+            _tableSuppressRefresh = true; // the resulting TextChanged must not rebuild the grid
             try { doc.Replace(ls.Offset, le.EndOffset - ls.Offset, newText); }
             catch { /* offsets shifted — the follow handler will re-bind */ }
             finally { _tableSyncing = false; }
@@ -1741,8 +1746,8 @@ namespace Calcpad.Avalonia
 
         private static string BuildMatrix(string name, System.Collections.Generic.List<System.Collections.Generic.List<string>> data, bool markdown)
         {
-            var rows = data.Where(r => r.Any(c => !string.IsNullOrWhiteSpace(c))).ToList();
-            var body = string.Join(" | ", rows.Select(r =>
+            // Keep every row the grid has (an added row is intentional); empty cells become 0.
+            var body = string.Join(" | ", data.Select(r =>
                 string.Join("; ", r.Select(c => string.IsNullOrWhiteSpace(c) ? "0" : c.Trim()))));
             var op = markdown ? ":=" : "=";
             return $"{name} {op} [{body}]\n";
