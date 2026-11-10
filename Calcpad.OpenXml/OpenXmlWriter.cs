@@ -21,6 +21,11 @@ namespace Calcpad.OpenXml
         private readonly TableBuilder _tableBuilder = new();
         private string _url = string.Empty;
         private readonly Stack<(int, bool)> _listLevels = new();
+        // In template mode, maps Calcpad heading ids (h1..h6) to the template's own
+        // heading style ids (Heading1..Heading6) so headings inherit the brand styling.
+        private IReadOnlyDictionary<string, string> _styleMap = EmptyMap;
+        private static readonly Dictionary<string, string> EmptyMap = new();
+
         public string Convert(string html, Stream stream, string url = "")
         {
             using var doc = WordprocessingDocument.Create(stream, WordprocessingDocumentType.Document);
@@ -36,14 +41,67 @@ namespace Calcpad.OpenXml
             return Validate(doc);
         }
 
-        private void WriteDocument(string html, WordprocessingDocument doc)
+        /// <summary>
+        /// Exports to <paramref name="path"/>. When <paramref name="templatePath"/> is a Word
+        /// template/document (.dotx/.docx), the rendered content is injected into a clone of that
+        /// template so the result inherits its header/footer, page setup, fonts and heading styles.
+        /// A null/empty <paramref name="templatePath"/> produces exactly the blank-document output.
+        /// </summary>
+        public string Convert(string html, string path, string templatePath, string url = "")
         {
-            // Add a main document part.
-            var mainPart = doc.AddMainDocumentPart();
-            // AddSettings(mainPart);
-            StyleDefinitionsWriter.CreateStyleDefinitionsPart(mainPart);
-            var numberingPart = mainPart.AddNewPart<NumberingDefinitionsPart>("rId1");
+            if (string.IsNullOrWhiteSpace(templatePath))
+            {
+                _url = url;
+                return Convert(html, path);
+            }
+
+            // Clone the template to the destination, then inject our content into it. Copying is a
+            // read of the (possibly network) master; the master itself is never opened writable.
+            if (!string.Equals(Path.GetFullPath(templatePath), Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase))
+                File.Copy(templatePath, path, true);
+
+            using var doc = WordprocessingDocument.Open(path, true);
+            doc.ChangeDocumentType(WordprocessingDocumentType.Document); // handles .dotx
+            // Don't let Word re-attach the (network) template every time the file is opened.
+            DetachTemplate(doc);
+            _url = url;
+            WriteDocument(html, doc, templateMode: true);
+            return Validate(doc);
+        }
+
+        private static void DetachTemplate(WordprocessingDocument doc)
+        {
+            try
+            {
+                var settings = doc.MainDocumentPart?.DocumentSettingsPart?.Settings;
+                settings?.Elements<AttachedTemplate>().ToList().ForEach(t => t.Remove());
+            }
+            catch { /* best effort */ }
+        }
+
+        private void WriteDocument(string html, WordprocessingDocument doc, bool templateMode = false)
+        {
+            // Reuse the template's main part (it already has one) or create a fresh one.
+            var mainPart = templateMode
+                ? (doc.MainDocumentPart ?? doc.AddMainDocumentPart())
+                : doc.AddMainDocumentPart();
+
+            // Styles: in template mode merge our styles into the template's (keeping its DocDefaults
+            // and brand font), and learn the heading-style map; otherwise write our own from scratch.
+            if (templateMode && mainPart.StyleDefinitionsPart is not null)
+                _styleMap = StyleDefinitionsWriter.MergeInto(mainPart);
+            else
+                StyleDefinitionsWriter.CreateStyleDefinitionsPart(mainPart);
+
+            // Numbering: the injected content references our own list definitions. Replace any the
+            // template carried (the template body is cleared anyway) and let the SDK assign the rId.
+            if (templateMode && mainPart.NumberingDefinitionsPart is not null)
+                mainPart.DeletePart(mainPart.NumberingDefinitionsPart);
+            var numberingPart = templateMode
+                ? mainPart.AddNewPart<NumberingDefinitionsPart>()
+                : mainPart.AddNewPart<NumberingDefinitionsPart>("rId1");
             CreateNumberingPart(numberingPart);
+
             // Create the document structure and add text.
             var htmlDocument = new HtmlDocument();
             htmlDocument.LoadHtml(html);
@@ -51,12 +109,39 @@ namespace Calcpad.OpenXml
             mainNode ??= htmlDocument.DocumentNode;
 
             var body = (Body)ParseHtmlNode(mainNode, mainPart);
-            AddSectionProperties(body);
-            mainPart.Document = new Document()
-            {
-                Body = body
-            };
 
+            if (templateMode && mainPart.Document?.Body is Body templateBody)
+            {
+                // Inject into the template's own body, preserving its trailing section properties
+                // (header/footer references, page size and margins).
+                InjectIntoTemplateBody(templateBody, body);
+            }
+            else
+            {
+                AddSectionProperties(body);
+                mainPart.Document = new Document()
+                {
+                    Body = body
+                };
+            }
+        }
+
+        // Clears the template body's block content but keeps its final SectionProperties, then
+        // inserts the rendered content before that sectPr so page setup and header/footer survive.
+        private static void InjectIntoTemplateBody(Body templateBody, Body content)
+        {
+            var sectPr = templateBody.Elements<SectionProperties>().LastOrDefault();
+            foreach (var child in templateBody.ChildElements.Where(c => c is not SectionProperties).ToList())
+                child.Remove();
+
+            foreach (var el in content.ChildElements.Where(c => c is not SectionProperties).ToList())
+            {
+                el.Remove();
+                if (sectPr is not null)
+                    templateBody.InsertBefore(el, sectPr);
+                else
+                    templateBody.AppendChild(el);
+            }
         }
 
         static void CreateNumberingPart(NumberingDefinitionsPart numberingPart)
@@ -720,9 +805,11 @@ namespace Calcpad.OpenXml
             };
         }
 
-        private static Paragraph AddParagraph(HtmlNode domNode)
+        private Paragraph AddParagraph(HtmlNode domNode)
         {
             var styleName = domNode.Name.ToLowerInvariant();
+            // In template mode h1..h6 are remapped to the template's own heading style ids.
+            var styleId = _styleMap.TryGetValue(styleName, out var mapped) ? mapped : styleName;
             var p = new Paragraph();
             if (styleName != "p")
             {
@@ -730,7 +817,7 @@ namespace Calcpad.OpenXml
                 {
                     ParagraphStyleId = new ParagraphStyleId()
                     {
-                        Val = styleName
+                        Val = styleId
                     }
                 };
             }
