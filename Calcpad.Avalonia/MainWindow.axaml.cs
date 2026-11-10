@@ -48,6 +48,7 @@ namespace Calcpad.Avalonia
         private readonly TextBlock _status;
         private readonly MenuItem _snippetsMenu;
         private readonly Border _keypadHost;
+        private WrapPanel? _keypadVars;   // the keypad's live Variables column
         private readonly Border _formatBar;
         private readonly Border _filePanel;
         private readonly TreeView _fileTree;
@@ -463,7 +464,10 @@ namespace Calcpad.Avalonia
             // Mode-aware snippets (purple). Priority above units/functions so a snippet wins its
             // own exact trigger on Tab (e.g. 'var' snippet beats the 'VAR' volt-amp-reactive unit).
             foreach (var sn in CalcpadSnippets.ForMode(CurrentMarkdownFull()))
-                list.Add(new CompletionData(sn.Key, sn.Body, description: sn.Title + "\n\n" + sn.Body,
+                // The filter key includes the title so the snippet is also found by words from its
+                // description (e.g. typing "unit" surfaces the "convert" snippet). Insertion still
+                // uses the body, and display still shows "key — Title".
+                list.Add(new CompletionData($"{sn.Key} {sn.Title}", sn.Body, description: sn.Title + "\n\n" + sn.Body,
                     priority: 50, content: $"{sn.Key}  —  {sn.Title}", colorHex: ColSnip));
 
             return list;
@@ -696,31 +700,117 @@ namespace Calcpad.Avalonia
 
         // ---- Keypad ----
 
+        // Common units offered in the keypad's Units column, grouped (incl. temperature/degrees).
+        private static readonly (string group, string[] units)[] KeypadUnits =
+        {
+            ("Length",   new[] { "m", "cm", "mm", "km" }),
+            ("Mass",     new[] { "kg", "g", "t" }),
+            ("Force",    new[] { "N", "kN", "MN" }),
+            ("Pressure", new[] { "Pa", "kPa", "MPa", "GPa" }),
+            ("Temp",     new[] { "°C", "K", "°F", "°R", "Δ°C" }),
+            ("Angle",    new[] { "°", "rad" }),
+            ("Time",     new[] { "s", "min", "h" }),
+            ("Elec",     new[] { "A", "V", "W", "Ω" }),
+        };
+
         private void BuildKeypad()
         {
-            var root = new StackPanel { Orientation = Orientation.Vertical, Spacing = 2 };
+            var groups = new StackPanel { Orientation = Orientation.Vertical, Spacing = 2 };
 
-            root.Children.Add(KeyGroup("Numbers",
+            groups.Children.Add(KeyGroup("Numbers",
                 Kp("7", "7"), Kp("8", "8"), Kp("9", "9"), Kp("4", "4"), Kp("5", "5"), Kp("6", "6"),
                 Kp("1", "1"), Kp("2", "2"), Kp("3", "3"), Kp("0", "0"), Kp(".", ".")));
 
-            root.Children.Add(KeyGroup("Operators",
+            groups.Children.Add(KeyGroup("Operators",
                 Kp("+", " + "), Kp("−", " - "), Kp("·", "*"), Kp("/", "/"), Kp("^", "^"),
                 // '=' is handled specially (markdown-first assignment is ':=').
                 ("=", (Action)(() => InsertAtCaret(CurrentMarkdownFull() ? " := " : " = "))),
                 Kp("≠", " ≠ "), Kp("≤", " ≤ "), Kp("≥", " ≥ "), Kp("(", "("), Kp(")", ")"), Kp("|", " | ")));
 
-            root.Children.Add(KeyGroup("Functions",
+            groups.Children.Add(KeyGroup("Functions",
                 Kp("sin", "sin(‸)"), Kp("cos", "cos(‸)"), Kp("tan", "tan(‸)"),
                 Kp("asin", "asin(‸)"), Kp("acos", "acos(‸)"), Kp("atan", "atan(‸)"),
                 Kp("√", "sqrt(‸)"), Kp("ln", "ln(‸)"), Kp("log", "log(‸)"),
                 Kp("exp", "exp(‸)"), Kp("abs", "abs(‸)"), Kp("round", "round(‸)")));
 
-            root.Children.Add(KeyGroup("Greek",
+            groups.Children.Add(KeyGroup("Greek",
                 Kp("π", "π"), Kp("α", "α"), Kp("β", "β"), Kp("γ", "γ"), Kp("δ", "δ"), Kp("ε", "ε"),
                 Kp("θ", "θ"), Kp("λ", "λ"), Kp("μ", "μ"), Kp("ρ", "ρ"), Kp("σ", "σ"), Kp("φ", "φ"), Kp("ω", "ω")));
 
+            // Right-hand column: this worksheet's variables (clickable) + a units palette.
+            _keypadVars = new WrapPanel { Orientation = Orientation.Horizontal };
+            var unitsPanel = new StackPanel { Orientation = Orientation.Vertical, Spacing = 1 };
+            foreach (var (g, units) in KeypadUnits)
+            {
+                var wrap = new WrapPanel { Orientation = Orientation.Horizontal };
+                foreach (var u in units)
+                {
+                    var btn = MakeButton(u, () => InsertAtCaret(u));
+                    btn.Foreground = new SolidColorBrush(Color.Parse(ColUnit));
+                    wrap.Children.Add(btn);
+                }
+                unitsPanel.Children.Add(SymbolRow(g, wrap));
+            }
+
+            var column = new StackPanel { Orientation = Orientation.Vertical, Spacing = 2, Width = 250 };
+            column.Children.Add(new TextBlock { Text = "Variables", FontSize = 11, FontWeight = FontWeight.SemiBold, Foreground = new SolidColorBrush(Color.Parse("#6B7280")) });
+            column.Children.Add(new ScrollViewer { MaxHeight = 56, Content = _keypadVars, HorizontalScrollBarVisibility = global::Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled });
+            column.Children.Add(new TextBlock { Text = "Units", FontSize = 11, FontWeight = FontWeight.SemiBold, Foreground = new SolidColorBrush(Color.Parse("#6B7280")), Margin = new global::Avalonia.Thickness(0, 2, 0, 0) });
+            column.Children.Add(unitsPanel);
+
+            var root = new DockPanel { LastChildFill = true };
+            var colBorder = new Border
+            {
+                BorderBrush = new SolidColorBrush(Color.Parse("#E2E4E8")),
+                BorderThickness = new global::Avalonia.Thickness(1, 0, 0, 0),
+                Padding = new global::Avalonia.Thickness(8, 0, 0, 0),
+                Margin = new global::Avalonia.Thickness(8, 0, 0, 0),
+                Child = column
+            };
+            DockPanel.SetDock(colBorder, global::Avalonia.Controls.Dock.Right);
+            root.Children.Add(colBorder);
+            root.Children.Add(groups);
+
             _keypadHost.Child = root;
+            RefreshKeypadVariables();
+        }
+
+        // A compact label + content row for the keypad's units sub-groups.
+        private static Control SymbolRow(string title, Control content)
+        {
+            var header = new TextBlock
+            {
+                Text = title, FontSize = 10,
+                Foreground = new SolidColorBrush(Color.Parse("#9AA1AC")),
+                Width = 56, VerticalAlignment = VerticalAlignment.Center
+            };
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
+            row.Children.Add(header);
+            row.Children.Add(content);
+            return row;
+        }
+
+        // Repopulates the keypad's Variables column from the names defined in the current worksheet.
+        private void RefreshKeypadVariables()
+        {
+            if (_keypadVars is null) return;
+            _keypadVars.Children.Clear();
+            var any = false;
+            foreach (var name in CollectDefinedNames())
+            {
+                any = true;
+                var btn = MakeButton(name, () => InsertAtCaret(name));
+                btn.Foreground = new SolidColorBrush(Color.Parse(ColVar));
+                ToolTip.SetTip(btn, DescribeUserSymbol(name) ?? "defined in this worksheet");
+                _keypadVars.Children.Add(btn);
+            }
+            if (!any)
+                _keypadVars.Children.Add(new TextBlock
+                {
+                    Text = "— none yet —", FontSize = 11,
+                    Foreground = new SolidColorBrush(Color.Parse("#9AA1AC")),
+                    Margin = new global::Avalonia.Thickness(2)
+                });
         }
 
         // A keypad key: a label and the action it performs (insert its text by default).
@@ -1116,8 +1206,9 @@ namespace Calcpad.Avalonia
         private sealed class AppState
         {
             public string? LastFolder { get; set; }
-            public string? LastTemplate { get; set; }   // last Word template used for export
-            public bool UseTemplate { get; set; }        // master toggle for template-based export
+            public string? TemplateFolder { get; set; }  // folder/share holding the Word templates
+            public string? LastTemplate { get; set; }    // selected Word template used for export
+            public bool UseTemplate { get; set; }         // master toggle for template-based export
         }
 
         // Builds a TreeViewItem for a directory: sub-folders first, then *.cpd files, each file
@@ -1313,8 +1404,8 @@ namespace Calcpad.Avalonia
             };
             _templateCheck = tmpl;
             bar.Children.Add(tmpl);
-            var pick = MakeButton("…", async () => await ChooseTemplateAsync());
-            ToolTip.SetTip(pick, "Choose the Word template (.dotx/.docx) to clone when exporting");
+            var pick = MakeButton("Setup…", async () => await ChooseTemplateAsync());
+            ToolTip.SetTip(pick, "Configure the Word export template (folder, file, on/off)");
             pick.MinWidth = 26;
             bar.Children.Add(pick);
             UpdateTemplateTip();
@@ -1522,6 +1613,7 @@ namespace Calcpad.Avalonia
                 _webView.LoadUrl(new Uri(path).AbsoluteUri);
 
                 _status.Text = $"{(_currentFile is null ? "untitled" : Path.GetFileName(_currentFile))} · rendered in {sw.ElapsedMilliseconds} ms";
+                RefreshKeypadVariables(); // keep the keypad's Variables column in sync
             }
             catch (Exception ex)
             {
@@ -2029,55 +2121,193 @@ namespace Calcpad.Avalonia
             catch (Exception ex) { _status.Text = "Export failed: " + ex.Message; }
         }
 
-        // Lets the user pick the Word template to clone on export. Remembers it and enables the
-        // template toggle. The picker opens at the last template's folder, else the company share.
+        // Configuration wizard for template-based Word export: choose the templates folder/share,
+        // pick the template file (scanned from the folder with a timeout, or browsed), and toggle
+        // whether exports use it. Everything is persisted to state.json.
         private async System.Threading.Tasks.Task ChooseTemplateAsync()
         {
-            try
+            var folderBox = new TextBox
+            {
+                Text = _state.TemplateFolder
+                       ?? (!string.IsNullOrEmpty(_state.LastTemplate) ? Path.GetDirectoryName(_state.LastTemplate) : null)
+                       ?? (Directory.Exists(DefaultTemplateShare) ? DefaultTemplateShare : string.Empty),
+                Watermark = @"\\server\share\Word  or a local folder",
+                MinWidth = 330
+            };
+            var browseFolder = new Button { Content = "Browse…" };
+            var fileCombo = new ComboBox { MinWidth = 300 };
+            var rescan = new Button { Content = "Scan" };
+            var browseFile = new Button { Content = "Pick file…" };
+            var useCheck = new CheckBox { Content = "Use this template when exporting to Word", IsChecked = _useTemplate };
+            var scanStatus = new TextBlock
+            {
+                Foreground = new SolidColorBrush(Color.Parse("#6B7280")),
+                TextWrapping = global::Avalonia.Media.TextWrapping.Wrap
+            };
+            string? chosenFile = _state.LastTemplate;
+
+            async System.Threading.Tasks.Task Scan()
+            {
+                var folder = folderBox.Text?.Trim() ?? string.Empty;
+                fileCombo.Items.Clear();
+                if (folder.Length == 0) { scanStatus.Text = "Enter or browse to a templates folder."; return; }
+                scanStatus.Text = "Scanning…";
+                try
+                {
+                    var names = await System.Threading.Tasks.Task.Run(() =>
+                        new DirectoryInfo(folder).EnumerateFiles()
+                            .Where(f => (f.Extension.Equals(".dotx", StringComparison.OrdinalIgnoreCase)
+                                      || f.Extension.Equals(".docx", StringComparison.OrdinalIgnoreCase))
+                                      && !f.Name.StartsWith("~$"))
+                            .Select(f => f.Name).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList())
+                        .WaitAsync(TimeSpan.FromSeconds(5));
+                    foreach (var n in names) fileCombo.Items.Add(new ComboBoxItem { Content = n });
+                    scanStatus.Text = names.Count == 0 ? "No .dotx/.docx found in this folder." : $"{names.Count} template(s) found.";
+                    var cur = chosenFile is null ? null : Path.GetFileName(chosenFile);
+                    if (cur is not null)
+                        for (int k = 0; k < fileCombo.Items.Count; k++)
+                            if (fileCombo.Items[k] is ComboBoxItem ci && (string)ci.Content! == cur) { fileCombo.SelectedIndex = k; break; }
+                }
+                catch { scanStatus.Text = "Folder not reachable right now (offline or wrong path). You can still 'Pick file…'."; }
+            }
+
+            fileCombo.SelectionChanged += (_, _) =>
+            {
+                if (fileCombo.SelectedItem is ComboBoxItem ci)
+                    chosenFile = Path.Combine(folderBox.Text?.Trim() ?? string.Empty, (string)ci.Content!);
+            };
+            browseFolder.Click += async (_, _) =>
+            {
+                var picked = await StorageProvider.OpenFolderPickerAsync(
+                    new FolderPickerOpenOptions { Title = "Templates folder", AllowMultiple = false });
+                if (picked.Count > 0) { folderBox.Text = picked[0].Path.LocalPath; await Scan(); }
+            };
+            rescan.Click += async (_, _) => await Scan();
+            browseFile.Click += async (_, _) =>
             {
                 global::Avalonia.Platform.Storage.IStorageFolder? start = null;
-                var seed = !string.IsNullOrWhiteSpace(_state.LastTemplate)
-                    ? Path.GetDirectoryName(_state.LastTemplate)
-                    : (Directory.Exists(DefaultTemplateShare) ? DefaultTemplateShare : null);
-                if (seed is not null)
-                {
-                    try { start = await StorageProvider.TryGetFolderFromPathAsync(seed); } catch { }
-                }
-
+                var seed = folderBox.Text?.Trim();
+                if (!string.IsNullOrEmpty(seed)) { try { start = await StorageProvider.TryGetFolderFromPathAsync(seed); } catch { } }
                 var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
                 {
                     Title = "Choose a Word template",
                     AllowMultiple = false,
                     SuggestedStartLocation = start,
-                    FileTypeFilter = new[]
-                    {
-                        new FilePickerFileType("Word template") { Patterns = new[] { "*.dotx", "*.docx" } }
-                    }
+                    FileTypeFilter = new[] { new FilePickerFileType("Word template") { Patterns = new[] { "*.dotx", "*.docx" } } }
                 });
-                if (files.Count == 0) return;
+                if (files.Count > 0)
+                {
+                    chosenFile = files[0].Path.LocalPath;
+                    folderBox.Text = Path.GetDirectoryName(chosenFile) ?? folderBox.Text;
+                    useCheck.IsChecked = true;
+                    await Scan();
+                }
+            };
 
-                _state.LastTemplate = files[0].Path.LocalPath;
-                _useTemplate = true;
-                _state.UseTemplate = true;
-                if (_templateCheck is not null) _templateCheck.IsChecked = true;
-                SaveState();
-                UpdateTemplateTip();
-                _status.Text = "Word template: " + Path.GetFileName(_state.LastTemplate);
-            }
-            catch (Exception ex) { _status.Text = "Template pick failed: " + ex.Message; }
+            var body = new StackPanel { Margin = new global::Avalonia.Thickness(16), Spacing = 10, MinWidth = 450 };
+            body.Children.Add(new TextBlock
+            {
+                Text = "Word export can clone a company template so the .docx inherits its header/footer, margins, fonts and heading styles.",
+                TextWrapping = global::Avalonia.Media.TextWrapping.Wrap
+            });
+            body.Children.Add(new TextBlock { Text = "1 · Templates folder", FontWeight = FontWeight.SemiBold });
+            var row1 = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            row1.Children.Add(folderBox); row1.Children.Add(browseFolder);
+            body.Children.Add(row1);
+            body.Children.Add(new TextBlock { Text = "2 · Template file", FontWeight = FontWeight.SemiBold });
+            var row2 = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            row2.Children.Add(fileCombo); row2.Children.Add(rescan); row2.Children.Add(browseFile);
+            body.Children.Add(row2);
+            body.Children.Add(scanStatus);
+            body.Children.Add(useCheck);
+
+            var save = new Button { Content = "Save", MinWidth = 72 };
+            var cancel = new Button { Content = "Cancel", MinWidth = 72 };
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
+            buttons.Children.Add(save); buttons.Children.Add(cancel);
+            body.Children.Add(buttons);
+
+            var dlg = new Window
+            {
+                Title = "Word template setup",
+                SizeToContent = SizeToContent.Height,
+                Width = 520,
+                CanResize = false,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Content = body
+            };
+            save.Click += (_, _) => dlg.Close(true);
+            cancel.Click += (_, _) => dlg.Close(false);
+
+            _ = Scan(); // populate while the dialog opens
+            var ok = await dlg.ShowDialog<bool>(this);
+            if (!ok) return;
+
+            _state.TemplateFolder = string.IsNullOrWhiteSpace(folderBox.Text) ? null : folderBox.Text.Trim();
+            _state.LastTemplate = string.IsNullOrWhiteSpace(chosenFile) ? null : chosenFile;
+            _useTemplate = useCheck.IsChecked == true && _state.LastTemplate is not null;
+            _state.UseTemplate = _useTemplate;
+            if (_templateCheck is not null) _templateCheck.IsChecked = _useTemplate;
+            SaveState();
+            UpdateTemplateTip();
+            _status.Text = _state.LastTemplate is null
+                ? "No Word template set"
+                : (_useTemplate ? "Word template: " : "Word template (off): ") + Path.GetFileName(_state.LastTemplate);
         }
 
-        // Verifies the template is reachable within a short timeout (a dead UNC share can otherwise
-        // hang for a minute). Returns the usable path, or null to fall back to a blank export.
-        private static async System.Threading.Tasks.Task<string?> ResolveTemplateAsync(string path)
+        private static string TemplateCacheDir =>
+            Path.Combine(Path.GetDirectoryName(StateFile)!, "template-cache");
+
+        // Resolves the template to a LOCAL, usable path and keeps an offline cache:
+        //  • source reachable (within a 4 s timeout) → refresh the cache if stale, use the cached copy;
+        //  • source offline/slow/denied → fall back to the cached copy if one exists;
+        //  • nothing available → null (caller offers a blank export).
+        // Reading a local cached copy also keeps the writer off the (possibly slow) network.
+        private async System.Threading.Tasks.Task<string?> ResolveTemplateAsync(string source)
         {
+            var cacheFile = Path.Combine(TemplateCacheDir, TemplateCacheKey(source) + Path.GetExtension(source));
+
+            (DateTime mtime, long len)? info = null;
             try
             {
-                var ok = await System.Threading.Tasks.Task.Run(() => File.Exists(path))
-                    .WaitAsync(TimeSpan.FromSeconds(4));
-                return ok ? path : null;
+                info = await System.Threading.Tasks.Task.Run(() =>
+                {
+                    var fi = new FileInfo(source);
+                    if (!fi.Exists) throw new FileNotFoundException();
+                    return (fi.LastWriteTimeUtc, fi.Length);
+                }).WaitAsync(TimeSpan.FromSeconds(4));
             }
-            catch { return null; } // timeout, access denied, share offline, …
+            catch { info = null; } // timeout / offline / not found / access denied
+
+            if (info is { } meta)
+            {
+                try
+                {
+                    Directory.CreateDirectory(TemplateCacheDir);
+                    // File.Copy preserves the source's last-write time, so compare it + length.
+                    var fresh = File.Exists(cacheFile)
+                        && new FileInfo(cacheFile).Length == meta.len
+                        && File.GetLastWriteTimeUtc(cacheFile) == meta.mtime;
+                    if (!fresh)
+                        await System.Threading.Tasks.Task.Run(() => File.Copy(source, cacheFile, true))
+                            .WaitAsync(TimeSpan.FromSeconds(20));
+                    return cacheFile;
+                }
+                catch { return File.Exists(cacheFile) ? cacheFile : source; } // source is live even if caching failed
+            }
+
+            if (File.Exists(cacheFile))
+            {
+                _status.Text = "Template offline — using cached copy";
+                return cacheFile;
+            }
+            return null;
+        }
+
+        private static string TemplateCacheKey(string source)
+        {
+            var bytes = System.Security.Cryptography.SHA1.HashData(Encoding.UTF8.GetBytes(source));
+            return System.Convert.ToHexString(bytes)[..16];
         }
 
         private void UpdateTemplateTip()

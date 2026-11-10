@@ -76,7 +76,9 @@
 <table>
   <tr><td class="k"><b>Files</b></td><td>Browse a folder of worksheets; each <code>.cpd</code> expands into its functions.
       <b>Insert</b> adds <code>#include</code> for a file or a call for a function (relative paths when the option is on).</td></tr>
-  <tr><td class="k"><b>Keypad</b></td><td>Numbers, operators, functions and Greek letters. <code>=</code> inserts <code>:=</code> in markdown mode.</td></tr>
+  <tr><td class="k"><b>Keypad</b></td><td>Numbers, operators, functions and Greek letters. <code>=</code> inserts <code>:=</code> in markdown mode.
+      A right-hand column lists <span class="var">this worksheet's variables</span> and a <span class="unit">units palette</span>
+      (length, mass, force, pressure, temperature °C/K/°F/°R, angle, time, electrical) — click to insert.</td></tr>
   <tr><td class="k"><b>AI</b></td><td>Streaming assistant with agent mode, image/PDF attachments and persistent memory.
       Set <code>ANTHROPIC_API_KEY</code> or paste a key.</td></tr>
 </table>
@@ -88,7 +90,11 @@ Compute snippets: <code>plot</code>, <code>vector</code>, <code>repeat</code>, <
 
 <h2>Options bar</h2>
 <p>Substitute · Format equations · Complex · Adaptive plots · Embed images · Relative paths · Auto-calc ·
-Angles (Deg/Rad/Grad) · Units · Palette. Decimals are set in the top toolbar.</p>
+<b>Word template</b> (+ <b>Setup…</b>) · Angles (Deg/Rad/Grad) · Units · Palette. Decimals are set in the top toolbar.</p>
+<p><b>Word template</b> export clones a company template (<code>.dotx/.docx</code>) so the <code>.docx</code> inherits its
+header/footer, margins, fonts and heading styles. <b>Setup…</b> opens a wizard to choose the templates folder (local or a
+network share), pick the file, and turn it on. The template is cached locally, so export still works if the share is offline.
+The CLI accepts <code>--template &lt;path&gt;</code> on a <code>.docx</code> export.</p>
 
 <p class="sub" style="margin-top:22px">View ▸ Quick reference opens the full Calcpad language reference.</p>
 </body>
