@@ -328,6 +328,13 @@ namespace Calcpad.Avalonia
             w.Show();
         }
 
+        // Completion colours by kind.
+        private const string ColVar = "#C2410C";   // our defined variables/functions (orange)
+        private const string ColUnit = "#16A34A";  // units (green)
+        private const string ColFunc = "#1F7FAE";  // built-in functions (blue)
+        private const string ColSnip = "#7C3AED";  // snippets (purple)
+        private const string ColDir = "#B2379B";   // directives (magenta)
+
         private System.Collections.Generic.List<CompletionData> BuildCompletionItems(bool directives)
         {
             var list = new System.Collections.Generic.List<CompletionData>();
@@ -336,25 +343,29 @@ namespace Calcpad.Avalonia
                 foreach (var d in new[] { "#md full", "#md on", "#md off", "#if", "#else if", "#else", "#end if",
                     "#def", "#end def", "#include", "#local", "#global", "#repeat", "#loop", "#for", "#while",
                     "#input", "#deg", "#rad", "#gra", "#round", "#format", "#const", "#hide", "#show" })
-                    list.Add(new CompletionData(d, d + "\n", priority: 1));
+                    list.Add(new CompletionData(d, d + "\n", priority: 1, colorHex: ColDir));
                 return list;
             }
 
-            // Mode-aware snippets.
+            // Our worksheet variables/functions FIRST (highest priority, orange).
+            foreach (var name in CollectDefinedNames())
+                list.Add(new CompletionData(name, priority: 100,
+                    description: "defined in this worksheet", content: name + "  —  variable", colorHex: ColVar));
+
+            // Units (green).
+            foreach (var u in CalcpadGlossary.UnitNames)
+                list.Add(new CompletionData(u, priority: 40,
+                    description: CalcpadGlossary.Describe(u) ?? "unit", content: u + "  —  unit", colorHex: ColUnit));
+
+            // Built-in functions (blue).
+            foreach (var fn in CalcpadGlossary.FunctionNames)
+                list.Add(new CompletionData(fn, fn + "(", priority: 30,
+                    description: CalcpadGlossary.Describe(fn) ?? "function", content: fn + "  —  function", colorHex: ColFunc));
+
+            // Mode-aware snippets (purple).
             foreach (var sn in CalcpadSnippets.ForMode(CurrentMarkdownFull()))
                 list.Add(new CompletionData(sn.Key, sn.Body, description: sn.Title + "\n\n" + sn.Body,
-                    priority: 2, content: $"{sn.Key}  —  {sn.Title}"));
-
-            // Built-in functions.
-            foreach (var fn in new[] { "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh",
-                "sqrt", "sqr", "cbrt", "root", "abs", "sign", "mod", "ln", "log", "log2", "exp",
-                "min", "max", "sum", "product", "average", "mean", "round", "floor", "ceiling", "trunc",
-                "gcd", "lcm", "fact", "re", "im", "phase", "random" })
-                list.Add(new CompletionData(fn, fn + "(", description: "function"));
-
-            // Variables and functions defined in the current worksheet.
-            foreach (var name in CollectDefinedNames())
-                list.Add(new CompletionData(name, priority: 3, description: "defined in this worksheet"));
+                    priority: 20, content: $"{sn.Key}  —  {sn.Title}", colorHex: ColSnip));
 
             return list;
         }

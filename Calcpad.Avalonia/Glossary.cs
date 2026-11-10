@@ -5,6 +5,9 @@ namespace Calcpad.Avalonia
     // Short descriptions shown when hovering a token in the editor (units, functions, constants).
     internal static class CalcpadGlossary
     {
+        public static System.Collections.Generic.IEnumerable<string> UnitNames => Units.Keys;
+        public static System.Collections.Generic.IEnumerable<string> FunctionNames => Functions.Keys;
+
         public static string? Describe(string word)
         {
             if (Units.TryGetValue(word, out var u)) return $"{word} — {u} (unit)";
