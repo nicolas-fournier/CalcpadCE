@@ -1598,10 +1598,17 @@ namespace Calcpad.Avalonia
             var baseDir = string.IsNullOrEmpty(_currentFile)
                 ? Environment.CurrentDirectory
                 : Path.GetDirectoryName(_currentFile) ?? Environment.CurrentDirectory;
-            return ExpandInclude(fileName, baseDir, 0);
+            // In markdown-first mode, a classic macro body (e.g. `n = n_rows(x)`) would expand at
+            // the call site as prose and never assign. Upgrade variable assignments inside
+            // #def…#end def blocks to ':=' so they still compute. The file on disk is untouched,
+            // and top-level (classic) library lines are left alone.
+            return ExpandInclude(fileName, baseDir, 0, markdownMacros: CurrentMarkdownFull());
         }
 
-        private static string ExpandInclude(string fileName, string baseDir, int depth)
+        private static readonly System.Text.RegularExpressions.Regex AssignRegex =
+            new(@"^(\s*[A-Za-z_]\w*\s*)=(?!=)", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        private static string ExpandInclude(string fileName, string baseDir, int depth, bool markdownMacros = false)
         {
             if (depth > 20) return "'[#include nested too deeply]";
             string path;
@@ -1612,6 +1619,7 @@ namespace Calcpad.Avalonia
             var dir = Path.GetDirectoryName(path) ?? baseDir;
             var sb = new StringBuilder();
             var isLocal = false;
+            var inDef = false; // inside a #def…#end def macro body
             // A '\v' separates the worksheet code from its saved input-form field data — keep only
             // the code part (matches the CLI), otherwise the form data is parsed as broken code.
             var content = File.ReadAllText(path);
@@ -1624,9 +1632,19 @@ namespace Calcpad.Avalonia
                 if (t.StartsWith("#global", StringComparison.OrdinalIgnoreCase)) { isLocal = false; continue; }
                 if (isLocal) continue;
                 if (t.StartsWith("#include", StringComparison.OrdinalIgnoreCase))
-                    sb.Append(ExpandInclude(t.Substring("#include".Length).Trim(), dir, depth + 1)).Append('\n');
-                else
-                    sb.Append(raw).Append('\n');
+                {
+                    sb.Append(ExpandInclude(t.Substring("#include".Length).Trim(), dir, depth + 1, markdownMacros)).Append('\n');
+                    continue;
+                }
+                if (t.StartsWith("#end def", StringComparison.OrdinalIgnoreCase)) inDef = false;
+                // Upgrade a bare variable assignment inside a macro body to ':=' for markdown.
+                var outLine = (markdownMacros && inDef && t.Length > 0 && t[0] != '#'
+                               && AssignRegex.IsMatch(raw))
+                    ? AssignRegex.Replace(raw, "$1:= ")
+                    : raw;
+                sb.Append(outLine).Append('\n');
+                if (t.StartsWith("#def", StringComparison.OrdinalIgnoreCase) && !t.StartsWith("#end def", StringComparison.OrdinalIgnoreCase))
+                    inDef = true;
             }
             return sb.ToString();
         }
