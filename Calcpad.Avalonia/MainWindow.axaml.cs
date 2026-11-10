@@ -200,7 +200,9 @@ namespace Calcpad.Avalonia
             public string? Path;
             public TextDocument Doc = new();
             public bool Dirty;
-            public string Title => Path is null ? "untitled" : System.IO.Path.GetFileName(Path);
+            // When the tab represents a .cpdz package, show the package name, not the extracted worksheet.cpd.
+            public string? DisplayName;
+            public string Title => DisplayName ?? (Path is null ? "untitled" : System.IO.Path.GetFileName(Path));
         }
 
         // Opens the path in an existing tab if already open, otherwise a new tab.
@@ -316,7 +318,8 @@ namespace Calcpad.Avalonia
 
         private void UpdateTitle()
         {
-            var name = _currentFile is null ? "untitled" : Path.GetFileName(_currentFile);
+            var name = _packagePath is not null ? Path.GetFileName(_packagePath)
+                     : _currentFile is null ? "untitled" : Path.GetFileName(_currentFile);
             Title = $"CalcpadCE {AppVersion} — {name}{(_dirty ? " *" : string.Empty)}";
         }
 
@@ -2699,6 +2702,8 @@ namespace Calcpad.Avalonia
             OpenOrActivate(wsPath, text);        // loads into a tab; _currentFile = extracted worksheet.cpd
             _packagePath = zipPath;
             _packageWorkDir = workDir;
+            if (_active is not null) _active.DisplayName = Path.GetFileName(zipPath); // tab shows the .cpdz name
+            RebuildTabs();
             if (cfg is not null) ApplyConfigJson(cfg);
             UpdateTitle();
             _status.Text = "Opened package " + Path.GetFileName(zipPath);
