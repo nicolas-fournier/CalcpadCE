@@ -62,11 +62,13 @@ namespace Calcpad.Avalonia
         private GridSplitter _fileSplitter = null!, _aiSplitter = null!;
         private double _fileColWidth = 240, _aiColWidth = 340; // remembered panel widths
         private TextBox? _aiKey;
-        private global::Markdown.Avalonia.MarkdownScrollViewer? _aiLog;
+        private ScrollViewer? _aiScroll;
+        private StackPanel? _aiMessages;
+        private global::Markdown.Avalonia.MarkdownScrollViewer? _aiCurrentBody;
+        private StringBuilder? _aiCurrentMd;
         private Border? _aiProposalBar;
         private TextBlock? _aiProposalPreview;
         private string? _pendingProposal;
-        private readonly StringBuilder _aiLogText = new();
         private bool _aiRenderQueued;
         private bool _agentTextSeen;
         private TextBox? _aiInput;
@@ -1059,27 +1061,26 @@ namespace Calcpad.Avalonia
             DockPanel.SetDock(_aiProposalBar, Dock.Bottom);
             root.Children.Add(_aiProposalBar);
 
-            // Conversation log fills the middle (last child): rendered as markdown.
-            _aiLog = new global::Markdown.Avalonia.MarkdownScrollViewer
+            // Conversation = a stack of message cards (clear prompt/response separation), markdown-rendered.
+            _aiMessages = new StackPanel { Orientation = Orientation.Vertical, Spacing = 6 };
+            _aiScroll = new ScrollViewer
             {
-                Markdown = string.Empty,
-                VerticalAlignment = VerticalAlignment.Stretch,
+                Content = _aiMessages,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 Margin = new global::Avalonia.Thickness(0, 3, 0, 3)
             };
-            root.Children.Add(_aiLog);
+            root.Children.Add(_aiScroll);
 
             _aiPanel.Child = root;
 
             // Persistent memory: reload the previous conversation.
             var storePath = Path.Combine(Path.GetDirectoryName(StateFile)!, "ai-history.json");
             _aiStore = new JsonChatHistoryStore(storePath);
-            var first = true;
             foreach (var m in _aiStore.Load())
             {
                 _aiHistory.Add(m);
-                if (!first) AppendAi("\n\n---\n\n");
-                first = false;
-                AppendAi($"**{(m.Role == AiRole.User ? "You" : "AI")}:** {m.Text}\n\n");
+                if (m.Role == AiRole.User) AddUserCard(m.Text);
+                else { _aiCurrentMd = null; AppendAi(m.Text); }
             }
         }
 
@@ -1090,8 +1091,8 @@ namespace Calcpad.Avalonia
             _aiAttachments.Clear();
             UpdateAttachInfo();
             _aiStore?.Clear();
-            _aiLogText.Clear();
-            if (_aiLog is not null) _aiLog.Markdown = string.Empty;
+            _aiCurrentMd = null; _aiCurrentBody = null;
+            _aiMessages?.Children.Clear();
         }
 
         private async void AiAttach()
@@ -1129,7 +1130,7 @@ namespace Calcpad.Avalonia
 
         private async void AiSend()
         {
-            if (_aiBusy || _aiInput is null || _aiLog is null || _aiKey is null) return;
+            if (_aiBusy || _aiInput is null || _aiMessages is null || _aiKey is null) return;
             var prompt = _aiInput.Text?.Trim();
             if (string.IsNullOrEmpty(prompt)) return;
             var key = _aiKey.Text?.Trim();
@@ -1138,8 +1139,7 @@ namespace Calcpad.Avalonia
 
             _aiBusy = true;
             _aiInput.Text = string.Empty;
-            if (_aiLogText.Length > 0) AppendAi("\n\n---\n\n");
-            AppendAi($"**You:** {prompt}\n\n");
+            AddUserCard(prompt);
             // Inject the CURRENT worksheet once via the system prompt (regenerated every send),
             // so the model always sees the latest state without stale copies piling up in history.
             var options = new AiOptions { ApiKey = key, SystemPrompt = CalcpadSystemPrompt.Default + "\n\n" + SvgGuidance + "\n\n" + WorksheetContext() };
@@ -1200,7 +1200,7 @@ namespace Calcpad.Avalonia
             _aiAttachments.Clear();
             UpdateAttachInfo();
 
-            AppendAi("**AI:** ");
+            EnsureAssistantCard();
             var sb = new StringBuilder();
             var client = new AnthropicAiClient(options);
             await foreach (var token in client.StreamReplyAsync(_aiHistory))
@@ -1230,7 +1230,7 @@ namespace Calcpad.Avalonia
             conv.AssistantText += t => { if (!string.IsNullOrEmpty(t)) _agentTextSeen = true; AppendAi(t); };
 
             _agentHistory.Add(AgentMessage.User(prompt));
-            AppendAi("**AI:** ");
+            EnsureAssistantCard();
             var reply = await conv.RunAsync(_agentHistory);
             // If the run streamed no assistant text (only tool calls), show the final reply so the
             // user always sees an answer.
@@ -1379,17 +1379,76 @@ namespace Calcpad.Avalonia
             AppendAi("\n\n✗ *Dismissed the proposed change.*\n\n");
         }
 
+        // Appends streamed text to the current assistant card (creating one if needed).
         private void AppendAi(string text)
         {
-            if (_aiLog is null) return;
+            if (_aiMessages is null) return;
             if (!Dispatcher.UIThread.CheckAccess()) { Dispatcher.UIThread.Post(() => AppendAi(text)); return; }
-            _aiLogText.Append(text);
+            EnsureAssistantCard();
+            _aiCurrentMd!.Append(text);
             if (_aiRenderQueued) return;            // coalesce re-renders while streaming tokens
             _aiRenderQueued = true;
             Dispatcher.UIThread.Post(() =>
             {
                 _aiRenderQueued = false;
-                try { _aiLog!.Markdown = _aiLogText.ToString(); } catch { }
+                try { if (_aiCurrentBody is not null) _aiCurrentBody.Markdown = _aiCurrentMd!.ToString(); } catch { }
+                ScrollChatToEnd();
+            }, DispatcherPriority.Background);
+        }
+
+        // A message card: distinct background for You vs Assistant + a Copy button (clear separation).
+        private Control MakeCard(bool user, Control body, Func<string> copyText)
+        {
+            var label = new TextBlock { Text = user ? "You" : "Assistant", FontWeight = FontWeight.SemiBold, FontSize = 10, VerticalAlignment = VerticalAlignment.Center, Foreground = new SolidColorBrush(Color.Parse(user ? "#1D4ED8" : "#0F766E")) };
+            var copy = new Button { Content = "📋", FontSize = 10, MinHeight = 0, Padding = new global::Avalonia.Thickness(4, 0), Background = global::Avalonia.Media.Brushes.Transparent, BorderThickness = new global::Avalonia.Thickness(0) };
+            ToolTip.SetTip(copy, "Copy this message");
+            copy.Click += async (_, _) =>
+            {
+                var top = global::Avalonia.Controls.TopLevel.GetTopLevel(this);
+                if (top?.Clipboard is not null) { await top.Clipboard.SetTextAsync(copyText()); _status.Text = "Copied message"; }
+            };
+            var head = new DockPanel { Margin = new global::Avalonia.Thickness(0, 0, 0, 2) };
+            DockPanel.SetDock(copy, Dock.Right);
+            head.Children.Add(copy);
+            head.Children.Add(label);
+            var inner = new StackPanel { Orientation = Orientation.Vertical };
+            inner.Children.Add(head);
+            inner.Children.Add(body);
+            return new Border
+            {
+                Background = new SolidColorBrush(Color.Parse(user ? "#EFF6FF" : "#FFFFFF")),
+                BorderBrush = new SolidColorBrush(Color.Parse("#E2E4E8")),
+                BorderThickness = new global::Avalonia.Thickness(1),
+                CornerRadius = new global::Avalonia.CornerRadius(4),
+                Padding = new global::Avalonia.Thickness(6, 4),
+                Child = inner
+            };
+        }
+
+        private void AddUserCard(string prompt)
+        {
+            _aiCurrentMd = null; _aiCurrentBody = null; // the reply starts a fresh assistant card
+            var body = new SelectableTextBlock { Text = prompt, TextWrapping = global::Avalonia.Media.TextWrapping.Wrap, FontSize = 12 };
+            _aiMessages!.Children.Add(MakeCard(true, body, () => prompt));
+            ScrollChatToEnd();
+        }
+
+        private void EnsureAssistantCard()
+        {
+            if (_aiCurrentMd is not null) return;
+            _aiCurrentMd = new StringBuilder();
+            _aiCurrentBody = new global::Markdown.Avalonia.MarkdownScrollViewer { Markdown = string.Empty };
+            var md = _aiCurrentMd;
+            _aiMessages!.Children.Add(MakeCard(false, _aiCurrentBody, () => md.ToString()));
+            ScrollChatToEnd();
+        }
+
+        private void ScrollChatToEnd()
+        {
+            if (_aiScroll is null) return;
+            Dispatcher.UIThread.Post(() =>
+            {
+                try { _aiScroll.Offset = new global::Avalonia.Vector(0, Math.Max(0, _aiScroll.Extent.Height - _aiScroll.Viewport.Height)); } catch { }
             }, DispatcherPriority.Background);
         }
 
