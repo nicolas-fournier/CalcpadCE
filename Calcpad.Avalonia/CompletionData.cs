@@ -12,12 +12,14 @@ namespace Calcpad.Avalonia
     internal sealed class CompletionData : ICompletionData
     {
         private readonly string _insert;
+        private readonly Action? _action;
 
         public CompletionData(string text, string? insert = null, string? description = null,
-            double priority = 0, string? content = null, string? colorHex = null)
+            double priority = 0, string? content = null, string? colorHex = null, Action? action = null)
         {
             Text = text;
             _insert = insert ?? text;
+            _action = action;
             Description = description ?? string.Empty;
             Priority = priority;
 
@@ -34,6 +36,9 @@ namespace Calcpad.Avalonia
         public double Priority { get; }
 
         public void Complete(TextArea textArea, ISegment completionSegment, EventArgs insertionRequestEventArgs)
-            => textArea.Document.Replace(completionSegment, _insert);
+        {
+            if (_action is not null) { _action(); return; } // run an action instead of inserting text
+            textArea.Document.Replace(completionSegment, _insert);
+        }
     }
 }

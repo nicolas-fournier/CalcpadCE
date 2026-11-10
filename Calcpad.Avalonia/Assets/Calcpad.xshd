@@ -7,6 +7,7 @@
   <Color name="Function" foreground="#1F7FAE" />
   <Color name="MathCode" foreground="#0C8F73" />
   <Color name="Unit"     foreground="#16A34A" />
+  <Color name="Variable" foreground="#C2410C" fontWeight="bold" />
 
   <RuleSet ignoreCase="true">
     <!-- single-quoted text comment -->
@@ -28,6 +29,11 @@
     <!-- directives / keywords -->
     <Rule color="Keyword">
       \#(md\s+full|md\s+on|md\s+off|md|else\s+if|end\s+if|end\s+def|if|else|rad|deg|gra|val|equ|noc|round|format|show|hide|nosub|novar|varsub|const|split|wrap|pre|post|repeat|for|while|loop|break|continue|include|local|global|def|pause|input|read|write|append|phasor|complex)\b
+    </Rule>
+
+    <!-- a variable/function being defined: the name before := or = (orange, bold) -->
+    <Rule color="Variable">
+      (?&lt;=^\s{0,20})(?-i:[A-Za-z_][A-Za-z0-9_]*\$?)(?=\s*(?::=|=)[^=])
     </Rule>
 
     <Keywords color="Function">

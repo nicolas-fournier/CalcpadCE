@@ -308,18 +308,22 @@ namespace Calcpad.Avalonia
         {
             if (!_completionEnabled || _completion is not null || string.IsNullOrEmpty(e.Text)) return;
             var ch = e.Text[0];
+            if (ch is '=' or '/' or '*' or '+' or '-') { MaybeProposeCalc(); return; }
             if (!char.IsLetter(ch) && ch != '#') return;
 
             var caret = _editor.CaretOffset;
-            // Only open at the start of a word, to avoid popping up mid-identifier.
-            if (ch != '#' && caret >= 2 && IsWordChar(_editor.Document.GetCharAt(caret - 2))) return;
+            // Re-open from the start of the current word, so completion resumes even mid-word
+            // (e.g. after dismissing it and typing again).
+            var start = caret - 1;
+            if (ch != '#')
+                while (start > 0 && IsWordChar(_editor.Document.GetCharAt(start - 1))) start--;
 
             var items = BuildCompletionItems(ch == '#');
             if (items.Count == 0) return;
 
             var w = new AvaloniaEdit.CodeCompletion.CompletionWindow(_editor.TextArea)
             {
-                StartOffset = caret - 1,
+                StartOffset = start,
                 CloseWhenCaretAtBeginning = true
             };
             foreach (var it in items) w.CompletionList.CompletionData.Add(it);
@@ -334,6 +338,38 @@ namespace Calcpad.Avalonia
         private const string ColFunc = "#1F7FAE";  // built-in functions (blue)
         private const string ColSnip = "#7C3AED";  // snippets (purple)
         private const string ColDir = "#B2379B";   // directives (magenta)
+
+        // Typing a math operator (= / * + -) on a markdown prose line proposes converting it to
+        // a calculation — but only when there is an operand before the operator (so markdown
+        // lists '- ' and bold '**' don't trigger it).
+        private void MaybeProposeCalc()
+        {
+            if (!CurrentMarkdownFull()) return;
+            var line = _editor.Document.GetLineByOffset(_editor.CaretOffset);
+            var full = _editor.Document.GetText(line.Offset, line.Length);
+            var text = full.Trim();
+            if (text.Length == 0 || text[0] == '#' || text.Contains('$')) return; // directive or already math
+
+            // Require an operand (letter/digit/')') immediately before the just-typed operator.
+            var col = _editor.CaretOffset - line.Offset - 2; // index of the char before the operator
+            while (col >= 0 && full[col] == ' ') col--;
+            if (col < 0) return;
+            var prev = full[col];
+            if (!(char.IsLetterOrDigit(prev) || prev == ')')) return;
+
+            var w = new AvaloniaEdit.CodeCompletion.CompletionWindow(_editor.TextArea)
+            {
+                StartOffset = _editor.CaretOffset,
+                EndOffset = _editor.CaretOffset
+            };
+            w.CompletionList.CompletionData.Add(new CompletionData(
+                "convert", content: "↔ Convert this line to a calculation",
+                description: "Wrap the line in $…$ so it is evaluated", colorHex: "#7C3AED",
+                action: ToggleCalc));
+            w.Closed += (_, _) => _completion = null;
+            _completion = w;
+            w.Show();
+        }
 
         private System.Collections.Generic.List<CompletionData> BuildCompletionItems(bool directives)
         {
