@@ -113,6 +113,8 @@ namespace Calcpad.Avalonia
             _previewFiles = new[] { Path.Combine(previewDir, "preview-a.html"), Path.Combine(previewDir, "preview-b.html") };
             LoadHighlighting();
             InitHoverTooltips();
+            InitCompletion();
+            InitLineNumberToggle();
             BuildEditorContextMenu();
             BuildKeypad();
             BuildFormatBar();
@@ -247,6 +249,7 @@ namespace Calcpad.Avalonia
         private void OnKeyDown(object? sender, KeyEventArgs e)
         {
             if (e.Key == Key.F5) { Render(); e.Handled = true; return; }
+            if (e.Key == Key.F12) { GoToDefinition(); e.Handled = true; return; }
             if (!e.KeyModifiers.HasFlag(KeyModifiers.Control)) return;
             var args = new RoutedEventArgs();
             switch (e.Key)
@@ -293,6 +296,134 @@ namespace Calcpad.Avalonia
             _debounce.Start();
         }
 
+        // ---- Autocompletion (snippets / functions / units / variables / directives) ----
+
+        private AvaloniaEdit.CodeCompletion.CompletionWindow? _completion;
+        private bool _completionEnabled = true;
+
+        private void InitCompletion()
+            => _editor.TextArea.TextEntered += OnTextEntered;
+
+        private void OnTextEntered(object? sender, global::Avalonia.Input.TextInputEventArgs e)
+        {
+            if (!_completionEnabled || _completion is not null || string.IsNullOrEmpty(e.Text)) return;
+            var ch = e.Text[0];
+            if (!char.IsLetter(ch) && ch != '#') return;
+
+            var caret = _editor.CaretOffset;
+            // Only open at the start of a word, to avoid popping up mid-identifier.
+            if (ch != '#' && caret >= 2 && IsWordChar(_editor.Document.GetCharAt(caret - 2))) return;
+
+            var items = BuildCompletionItems(ch == '#');
+            if (items.Count == 0) return;
+
+            var w = new AvaloniaEdit.CodeCompletion.CompletionWindow(_editor.TextArea)
+            {
+                StartOffset = caret - 1,
+                CloseWhenCaretAtBeginning = true
+            };
+            foreach (var it in items) w.CompletionList.CompletionData.Add(it);
+            w.Closed += (_, _) => _completion = null;
+            _completion = w;
+            w.Show();
+        }
+
+        private System.Collections.Generic.List<CompletionData> BuildCompletionItems(bool directives)
+        {
+            var list = new System.Collections.Generic.List<CompletionData>();
+            if (directives)
+            {
+                foreach (var d in new[] { "#md full", "#md on", "#md off", "#if", "#else if", "#else", "#end if",
+                    "#def", "#end def", "#include", "#local", "#global", "#repeat", "#loop", "#for", "#while",
+                    "#input", "#deg", "#rad", "#gra", "#round", "#format", "#const", "#hide", "#show" })
+                    list.Add(new CompletionData(d, d + "\n", priority: 1));
+                return list;
+            }
+
+            // Mode-aware snippets.
+            foreach (var sn in CalcpadSnippets.ForMode(CurrentMarkdownFull()))
+                list.Add(new CompletionData(sn.Key, sn.Body, description: sn.Title + "\n\n" + sn.Body,
+                    priority: 2, content: $"{sn.Key}  —  {sn.Title}"));
+
+            // Built-in functions.
+            foreach (var fn in new[] { "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh",
+                "sqrt", "sqr", "cbrt", "root", "abs", "sign", "mod", "ln", "log", "log2", "exp",
+                "min", "max", "sum", "product", "average", "mean", "round", "floor", "ceiling", "trunc",
+                "gcd", "lcm", "fact", "re", "im", "phase", "random" })
+                list.Add(new CompletionData(fn, fn + "(", description: "function"));
+
+            // Variables and functions defined in the current worksheet.
+            foreach (var name in CollectDefinedNames())
+                list.Add(new CompletionData(name, priority: 3, description: "defined in this worksheet"));
+
+            return list;
+        }
+
+        private System.Collections.Generic.IEnumerable<string> CollectDefinedNames()
+        {
+            var seen = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+            foreach (var raw in (_editor.Text ?? string.Empty).Split('\n'))
+            {
+                var m = System.Text.RegularExpressions.Regex.Match(raw,
+                    @"^\s*(?:#def\s+)?([A-Za-z_][A-Za-z0-9_]*\$?)\s*(?:\([^)]*\))?\s*(?::?=)");
+                if (m.Success && seen.Add(m.Groups[1].Value))
+                    yield return m.Groups[1].Value;
+            }
+        }
+
+        // ---- Double-click a line number to toggle that line to/from a calculation ----
+
+        private void InitLineNumberToggle()
+        {
+            Loaded += (_, _) =>
+            {
+                foreach (var m in _editor.TextArea.LeftMargins)
+                {
+                    if (m is AvaloniaEdit.Editing.LineNumberMargin lnm)
+                    {
+                        lnm.DoubleTapped += (_, e) =>
+                        {
+                            var pos = _editor.GetPositionFromPoint(e.GetPosition(_editor.TextArea.TextView));
+                            if (pos.HasValue)
+                            {
+                                _editor.CaretOffset = _editor.Document.GetOffset(pos.Value.Location);
+                                _editor.SelectionLength = 0;
+                                ToggleCalc();
+                            }
+                            e.Handled = true;
+                        };
+                    }
+                }
+            };
+        }
+
+        // ---- Go to definition of the variable/function under the caret ----
+
+        private void GoToDefinition()
+        {
+            var word = WordAt(_editor.CaretOffset);
+            if (string.IsNullOrEmpty(word)) { _status.Text = "No symbol under the caret"; return; }
+
+            var rx = new System.Text.RegularExpressions.Regex(
+                @"^\s*(?:#def\s+)?" + System.Text.RegularExpressions.Regex.Escape(word) + @"\s*(?:\([^)]*\))?\s*:?=");
+            var line = _editor.Document.GetLineByOffset(_editor.CaretOffset).LineNumber;
+            var lines = _editor.Document.Lines;
+            for (var i = 0; i < lines.Count; i++)
+            {
+                var dl = lines[i];
+                var text = _editor.Document.GetText(dl.Offset, dl.Length);
+                if (rx.IsMatch(text) && dl.LineNumber != line) // jump to the definition, not the use
+                {
+                    _editor.CaretOffset = dl.Offset;
+                    _editor.Select(dl.Offset, dl.Length);
+                    _editor.TextArea.Caret.BringCaretToView();
+                    _status.Text = $"Definition of '{word}' at line {dl.LineNumber}";
+                    return;
+                }
+            }
+            _status.Text = $"No definition found for '{word}'";
+        }
+
         // ---- Editor right-click context menu ----
 
         private void BuildEditorContextMenu()
@@ -313,6 +444,7 @@ namespace Calcpad.Avalonia
             Item("Paste", () => _editor.Paste(), "Ctrl+V");
             menu.Items.Add(new Separator());
             Item("Toggle ↔ Calc", ToggleCalc);
+            Item("Go to definition", GoToDefinition, "F12");
             Item("Insert function reference…", () => { if (_selectedTag is FunctionRef fr) InsertFunction(fr); else _status.Text = "Select a function in the Files panel"; });
             menu.Items.Add(new Separator());
             Item("Undo", () => _editor.Undo(), "Ctrl+Z");
@@ -472,6 +604,12 @@ namespace Calcpad.Avalonia
 
         private void ToggleAi_Click(object? sender, RoutedEventArgs e)
             => _aiPanel.IsVisible = !_aiPanel.IsVisible;
+
+        private void ToggleCompletion_Click(object? sender, RoutedEventArgs e)
+        {
+            _completionEnabled = !_completionEnabled;
+            _status.Text = _completionEnabled ? "Autocomplete on" : "Autocomplete off";
+        }
 
         // ---- AI assistant (Anthropic streaming chat) ----
 

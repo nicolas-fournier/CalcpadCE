@@ -52,6 +52,7 @@
         <MenuItem Header="Toggle _files" Click="ToggleFiles_Click"/>
         <MenuItem Header="Toggle _keypad" Click="ToggleKeypad_Click"/>
         <MenuItem Header="Toggle _AI assistant" Click="ToggleAi_Click"/>
+        <MenuItem Header="Toggle _autocomplete" Click="ToggleCompletion_Click"/>
         <Separator/>
         <MenuItem Header="Show _preview" Click="Run_Click"/>
         <MenuItem Header="Show _help" Click="ShowHelp_Click"/>
