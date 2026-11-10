@@ -1396,7 +1396,8 @@ namespace Calcpad.Avalonia
         private void InitTableEditor()
         {
             _editor.TextArea.Caret.PositionChanged += (_, _) => { try { OnCaretTableFollow(); } catch { } };
-            _editor.Document.Changed += (_, _) => { try { OnTableDocumentChanged(); } catch { } };
+            // TextEditor-level event (survives document swaps on open/tab switch, unlike Document.Changed).
+            _editor.TextChanged += (_, _) => { try { OnTableDocumentChanged(); } catch { } };
         }
 
         // The ⊞ button / "Insert table…" / "Edit table…" / gutter-badge entry point.
@@ -1412,20 +1413,48 @@ namespace Calcpad.Avalonia
             OpenTableEditor();
         }
 
+        private bool _tableFollowQueued;
+
         // Caret moved: bind the editor to the table under the caret, or close it when off tables.
+        // Deferred to the dispatcher so UI changes don't happen re-entrantly during caret/input events.
         private void OnCaretTableFollow()
         {
-            if (_tableSyncing || _tableInsertMode || _switching) return;
-            var info = DetectTableAtCaret();
-            if (info is not { } t) { if (_tableActive) CloseTableEditor(); return; }
-            if (_tableActive && t.start == _tableStartLine && t.end == _tableEndLine) return; // same table
-            OpenBoundTable(t);
+            if (_tableSyncing || _tableInsertMode || _switching || _tableFollowQueued) return;
+            _tableFollowQueued = true;
+            global::Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                _tableFollowQueued = false;
+                try
+                {
+                    if (_tableSyncing || _tableInsertMode || _switching) return;
+                    var info = DetectTableAtCaret();
+                    if (info is not { } t) { if (_tableActive) CloseTableEditor(); return; }
+                    if (_tableActive && t.start == _tableStartLine && t.end == _tableEndLine) return; // same table
+                    OpenBoundTable(t);
+                }
+                catch { }
+            }, global::Avalonia.Threading.DispatcherPriority.Background);
         }
 
         // Raw-text edit to the bound table (focus NOT in the grid) → refresh the grid from the text.
+        // Deferred to the dispatcher so we don't rebuild the grid's visual tree re-entrantly while the
+        // editor is still processing the text change (which can crash the layout pass).
         private void OnTableDocumentChanged()
         {
-            if (_tableSyncing || !_tableActive || _switching) return;
+            if (_tableSyncing || !_tableActive || _switching || _tableRefreshQueued) return;
+            _tableRefreshQueued = true;
+            global::Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                _tableRefreshQueued = false;
+                try { RefreshBoundTableFromText(); } catch { }
+            }, global::Avalonia.Threading.DispatcherPriority.Background);
+        }
+
+        private bool _tableRefreshQueued;
+
+        private void RefreshBoundTableFromText()
+        {
+            if (!_tableActive || _tableSyncing) return;
             var focused = global::Avalonia.Controls.TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() as global::Avalonia.Visual;
             if (focused is not null && global::Avalonia.VisualTree.VisualExtensions.IsVisualAncestorOf(_tableOverlay, focused)) return; // grid is the source
             var info = DetectTableAtLine(_tableStartLine);     // re-read the bound table from its own line
