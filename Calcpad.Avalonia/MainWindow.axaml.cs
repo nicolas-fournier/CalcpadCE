@@ -48,6 +48,10 @@ namespace Calcpad.Avalonia
         private readonly TextBlock _status;
         private readonly MenuItem _snippetsMenu;
         private readonly MenuItem _recentMenu;
+        private MenuItem _unitSwitchItem;
+        private MenuItem _unitSearchHost;
+        private TextBox _unitSearchBox;
+        private string? _unitCompatCategory;
         private readonly Border _keypadHost;
         private WrapPanel? _keypadVars;   // the keypad's live Variables column
         private Border _tableOverlay = null!; // inline table editor floating over the code editor
@@ -760,6 +764,8 @@ namespace Calcpad.Avalonia
             menu.Items.Add(new Separator());
             Item("Toggle ↔ Calc", ToggleCalc);
             var tableItem = Item("Insert table…", OpenTableEditor);
+            BuildUnitSwitchItem();
+            menu.Items.Add(_unitSwitchItem);
             Item("Go to definition", GoToDefinition, "F12");
             Item("Insert function reference…", () => { if (_selectedTag is FunctionRef fr) _ = InsertFunction(fr); else _status.Text = "Select a function in the Files panel"; });
             menu.Items.Add(new Separator());
@@ -769,7 +775,13 @@ namespace Calcpad.Avalonia
 
             // "Edit table…" when the clicked line is a table, else "Insert table…".
             menu.Opening += (_, _) =>
-                tableItem.Header = ClassifyLineBadge(CaretLineText()) == 't' ? "Edit table…" : "Insert table…";
+            {
+                var lineText = CaretLineText();
+                tableItem.Header = ClassifyLineBadge(lineText) == 't' ? "Edit table…" : "Insert table…";
+                // Only offer unit switching on calculation lines (ones that produce a result).
+                _unitSwitchItem.IsEnabled = ClassifyLineBadge(lineText) == 'f' ||
+                    (lineText.Contains('=') && !lineText.TrimStart().StartsWith("#"));
+            };
 
             _editor.ContextMenu = menu;
 
@@ -784,6 +796,109 @@ namespace Calcpad.Avalonia
                     }
                 },
                 global::Avalonia.Interactivity.RoutingStrategies.Tunnel);
+        }
+
+        // ---- "Switch result to unit" submenu (compatible units + live search) ----
+
+        private void BuildUnitSwitchItem()
+        {
+            _unitSearchBox = new TextBox
+            {
+                Watermark = "Search units…",
+                MinWidth = 180,
+                Margin = new global::Avalonia.Thickness(4, 2)
+            };
+            _unitSearchBox.TextChanged += (_, _) => RefreshUnitSwitchList();
+            _unitSearchHost = new MenuItem { StaysOpenOnClick = true, Header = _unitSearchBox };
+
+            _unitSwitchItem = new MenuItem { Header = "Switch result to unit" };
+            // Seed one child so the submenu arrow shows before it is first opened.
+            _unitSwitchItem.Items.Add(new MenuItem { Header = "…", IsEnabled = false });
+            _unitSwitchItem.SubmenuOpened += (_, _) =>
+            {
+                _unitCompatCategory = DetectCompatibleCategory(CaretLineText());
+                _unitSearchBox.Text = string.Empty;
+                RefreshUnitSwitchList();
+                Dispatcher.UIThread.Post(() => _unitSearchBox.Focus(), DispatcherPriority.Input);
+            };
+        }
+
+        private void RefreshUnitSwitchList()
+        {
+            if (_unitSwitchItem is null) return;
+            _unitSwitchItem.Items.Clear();
+            _unitSwitchItem.Items.Add(_unitSearchHost);
+            _unitSwitchItem.Items.Add(new Separator());
+
+            var filter = (_unitSearchBox.Text ?? string.Empty).Trim();
+            var hasFilter = filter.Length > 0;
+            var any = false;
+
+            foreach (var (cat, units) in UnitSwitchCatalog)
+            {
+                IEnumerable<string> matches;
+                if (hasFilter)
+                    matches = units.Where(u => u.Contains(filter, StringComparison.OrdinalIgnoreCase)
+                                            || cat.Contains(filter, StringComparison.OrdinalIgnoreCase));
+                else if (_unitCompatCategory is not null)
+                    matches = cat == _unitCompatCategory ? units : Array.Empty<string>();
+                else
+                    matches = units; // no hint and no search → show everything
+
+                var list = matches.ToList();
+                if (list.Count == 0) continue;
+
+                _unitSwitchItem.Items.Add(new MenuItem
+                {
+                    Header = cat + (cat == _unitCompatCategory && !hasFilter ? "  (compatible)" : string.Empty),
+                    IsEnabled = false,
+                    FontWeight = FontWeight.SemiBold
+                });
+                foreach (var u in list)
+                {
+                    var unit = u;
+                    var mi = new MenuItem { Header = "    " + unit };
+                    mi.Click += (_, _) => ApplyResultUnit(unit);
+                    _unitSwitchItem.Items.Add(mi);
+                    any = true;
+                }
+            }
+            if (!any)
+                _unitSwitchItem.Items.Add(new MenuItem { Header = "(no match)", IsEnabled = false });
+        }
+
+        // Finds the catalog category whose unit appears on the line (whole-token match), so the
+        // menu can default to dimensionally-compatible units.
+        private static string? DetectCompatibleCategory(string line)
+        {
+            foreach (var (cat, units) in UnitSwitchCatalog)
+                foreach (var u in units.OrderByDescending(x => x.Length))
+                {
+                    // simple units only (skip composite m^2 / kN*m for detection)
+                    if (u.IndexOfAny(new[] { '^', '*', '/' }) >= 0) continue;
+                    var pattern = $"(?<![A-Za-z]){System.Text.RegularExpressions.Regex.Escape(u)}(?![A-Za-z])";
+                    if (System.Text.RegularExpressions.Regex.IsMatch(line, pattern))
+                        return cat;
+                }
+            return null;
+        }
+
+        // Sets (or replaces) the display unit of the caret line via Calcpad's "| unit" target operator.
+        private void ApplyResultUnit(string unit)
+        {
+            var line = _editor.Document.GetLineByOffset(_editor.CaretOffset);
+            var text = _editor.Document.GetText(line.Offset, line.Length);
+            string baseText;
+            var bar = text.LastIndexOf('|');
+            // A trailing "| unit" is a display target; a '|' inside a matrix ends before ']'.
+            if (bar >= 0 && !text[bar..].Contains(']'))
+                baseText = text[..bar].TrimEnd();
+            else
+                baseText = text.TrimEnd();
+            var newText = baseText + " | " + unit;
+            _editor.Document.Replace(line.Offset, line.Length, newText);
+            _editor.CaretOffset = line.Offset + newText.Length;
+            _status.Text = "Result unit → " + unit;
         }
 
         // ---- Hover tooltips (units / functions / constants) ----
@@ -932,6 +1047,27 @@ namespace Calcpad.Avalonia
         }
 
         // ---- Keypad ----
+
+        // Richer, grouped catalog used by the editor's "Switch result to unit" menu.
+        // Composite forms (m^2, kN*m, km/h) are parsed by Calcpad's UnitsParser as target units.
+        private static readonly (string cat, string[] units)[] UnitSwitchCatalog =
+        {
+            ("Length",      new[] { "m", "cm", "mm", "km", "μm", "in", "ft", "yd", "mi" }),
+            ("Area",        new[] { "m^2", "cm^2", "mm^2", "km^2", "in^2", "ft^2" }),
+            ("Volume",      new[] { "m^3", "cm^3", "mm^3", "L", "mL", "in^3", "ft^3" }),
+            ("Mass",        new[] { "kg", "g", "mg", "t", "lb", "oz" }),
+            ("Force",       new[] { "N", "kN", "MN", "lbf", "kip" }),
+            ("Moment",      new[] { "N*m", "kN*m", "N*mm", "lbf*ft" }),
+            ("Pressure",    new[] { "Pa", "kPa", "MPa", "GPa", "bar", "psi", "ksi" }),
+            ("Temperature", new[] { "°C", "K", "°F", "°R", "Δ°C" }),
+            ("Angle",       new[] { "°", "rad" }),
+            ("Time",        new[] { "s", "ms", "min", "h" }),
+            ("Frequency",   new[] { "Hz", "kHz", "MHz" }),
+            ("Velocity",    new[] { "m/s", "km/h", "ft/s" }),
+            ("Energy",      new[] { "J", "kJ", "MJ", "Wh", "kWh" }),
+            ("Power",       new[] { "W", "kW", "MW", "hp" }),
+            ("Electric",    new[] { "A", "mA", "V", "kV", "Ω" }),
+        };
 
         // Common units offered in the keypad's Units column, grouped (incl. temperature/degrees).
         private static readonly (string group, string[] units)[] KeypadUnits =
