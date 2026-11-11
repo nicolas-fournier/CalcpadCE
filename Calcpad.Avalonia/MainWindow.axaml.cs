@@ -606,7 +606,9 @@ namespace Calcpad.Avalonia
 
         private void OnKeyDown(object? sender, KeyEventArgs e)
         {
-            if (e.Key == Key.F5) { Render(); e.Handled = true; return; }
+            // F5 goes through Run_Click so an #input worksheet toggles form <-> computed
+            // (a plain Render() here would freeze the current view and never return to the form).
+            if (e.Key == Key.F5) { Run_Click(sender, new RoutedEventArgs()); e.Handled = true; return; }
             if (e.Key == Key.F12) { GoToDefinition(); e.Handled = true; return; }
             if (!e.KeyModifiers.HasFlag(KeyModifiers.Control)) return;
             if (e.Key is Key.OemPlus or Key.Add) { ToggleCalc(); e.Handled = true; return; } // Ctrl+= toggles calc/prose
@@ -945,7 +947,9 @@ namespace Calcpad.Avalonia
             Item("Paste", () => _editor.Paste(), "Ctrl+V");
             menu.Items.Add(new Separator());
             Item("Toggle ↔ Calc", ToggleCalc);
-            var inputItem = Item("Insert input field (?)", InsertInputField);
+            Item("Force to text", ForceToText);
+            var inputItem = Item("Insert input field (?)", OpenInputPanel);
+            var quickInputItem = Item("Wrap / toggle number as input", InsertInputField);
             var tableItem = Item("Insert table…", OpenTableEditor);
             Item("Insert image…", () => _ = InsertImageAsync());
             BuildUnitSwitchItem();
@@ -963,11 +967,14 @@ namespace Calcpad.Avalonia
                 var lineText = CaretLineText();
                 tableItem.Header = ClassifyLineBadge(lineText) == 't' ? "Edit table…" : "Insert table…";
                 var sel = _editor.SelectedText ?? string.Empty;
-                inputItem.Header =
-                    System.Text.RegularExpressions.Regex.IsMatch(lineText, @"=\s*\?\{") ? "Remove input field (?)"
-                    : System.Text.RegularExpressions.Regex.IsMatch(sel.Trim(), @"^-?\d+(?:[.,]\d+)?$")
-                      || System.Text.RegularExpressions.Regex.IsMatch(lineText, @"^\s*[A-Za-z_][\w\.]*\s*(?::=|=)\s*-?\d") ? "Make input field (?)"
-                    : "Insert input field (?)";
+                var onInput = System.Text.RegularExpressions.Regex.IsMatch(lineText, @"=\s*\?\{");
+                // On an existing field the panel edits it in place; otherwise it inserts a new one.
+                inputItem.Header = onInput ? "Edit input field…" : "Insert input field…";
+                // Quick wrap/toggle: only meaningful on a number selection or a plain assignment.
+                quickInputItem.Header = onInput ? "Remove input field (?)" : "Wrap / toggle number as input";
+                quickInputItem.IsVisible = onInput
+                    || System.Text.RegularExpressions.Regex.IsMatch(sel.Trim(), @"^-?\d+(?:[.,]\d+)?$")
+                    || System.Text.RegularExpressions.Regex.IsMatch(lineText, @"^\s*[A-Za-z_][\w\.]*\s*(?::=|=)\s*-?\d");
                 // Offer unit switching on calculation lines (results) and on input-field lines.
                 _unitSwitchItem.IsEnabled = ClassifyLineBadge(lineText) is 'f' or 'r' or 'i' ||
                     (lineText.Contains('=') && !lineText.TrimStart().StartsWith("#"));
@@ -3294,6 +3301,56 @@ namespace Calcpad.Avalonia
             ScheduleRender();
         }
 
+        // Forces the current line (or selection) to render as literal TEXT, one-way (unlike the
+        // ↔ Calc toggle). Markdown: strips $…$ / $$…$$, turns ':=' into '=' and drops a trailing
+        // lone '=' so nothing is evaluated. Classic: prefixes a '  comment marker.
+        private void ForceToText()
+        {
+            int start, length;
+            string text;
+            if (_editor.SelectionLength > 0)
+            {
+                start = _editor.SelectionStart;
+                length = _editor.SelectionLength;
+                text = _editor.SelectedText ?? string.Empty;
+            }
+            else
+            {
+                var line = _editor.Document.GetLineByOffset(_editor.CaretOffset);
+                start = line.Offset;
+                length = line.Length;
+                text = _editor.Document.GetText(line.Offset, line.Length);
+            }
+
+            var leading = text.Length - text.TrimStart().Length;
+            var indent = text.Substring(0, leading);
+            var body = text.Substring(leading).TrimEnd();
+            if (body.Length == 0) return;
+
+            string replacement;
+            if (CurrentMarkdownFull())
+            {
+                if (body.StartsWith("$$") && body.EndsWith("$$") && body.Length >= 4)
+                    body = body.Substring(2, body.Length - 4).Trim();
+                else if (body.StartsWith("$") && body.EndsWith("$") && body.Length >= 2)
+                    body = body.Substring(1, body.Length - 2).Trim();
+                body = System.Text.RegularExpressions.Regex.Replace(body, @"\s*:=\s*", " = ");
+                if (body.EndsWith("=") && !body.EndsWith("==") && !body.EndsWith(">=") &&
+                    !body.EndsWith("<=") && !body.EndsWith("!="))
+                    body = body[..^1].TrimEnd();
+                replacement = body;
+            }
+            else
+            {
+                replacement = body.StartsWith("'") || body.StartsWith("\"") ? body : "'" + body;
+            }
+
+            _editor.Document.Replace(start, length, indent + replacement);
+            _editor.Focus();
+            _status.Text = "Line forced to text";
+            ScheduleRender();
+        }
+
         // ---- Quick input field (?) ----
 
         // Inserts/toggles a Calcpad input field (?{default}unit) and guarantees an #input
@@ -3636,8 +3693,8 @@ namespace Calcpad.Avalonia
                 _computeInputs = true; // switch to the computed view (neutralizes #input)
                 Render();
                 _status.Text = _inputValues.Count > 0
-                    ? $"Calculated with {_inputValues.Count} input value(s) — edit the code to return to the form"
-                    : "Calculated — edit the code to return to the input form";
+                    ? $"Calculated with {_inputValues.Count} input value(s) — press Run (F5) to edit the inputs again"
+                    : "Calculated — press Run (F5) to edit the inputs again";
             }
             catch (Exception ex) { _status.Text = "Inputs failed: " + ex.Message; }
         }
