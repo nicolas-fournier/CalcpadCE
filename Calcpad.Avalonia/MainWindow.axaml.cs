@@ -253,14 +253,53 @@ namespace Calcpad.Avalonia
             if (_ready) Render();
         }
 
-        // The browser shows the active tab's .cpdz contents, else falls back to the user's opened folder.
+        // The browser always keeps the user's opened folder, and — while a .cpdz tab is active —
+        // ALSO shows a top node with just that package's own libraries.
         private void UpdateFileBrowserForActiveDoc()
         {
-            string? target = _active?.PackageWorkDir is string wd && Directory.Exists(wd) ? wd : _userFolder;
-            if (string.Equals(target, _currentTreeRoot, StringComparison.OrdinalIgnoreCase)) return; // already shown
-            if (target is null) return;                 // nothing to show → keep whatever is there
-            if (LoadFolder(target, allFiles: _active?.PackageWorkDir == target))
-                _currentTreeRoot = target;
+            var pkgWd = _active?.PackageWorkDir is string wd && Directory.Exists(wd) ? wd : null;
+            var sig = (pkgWd ?? string.Empty) + "|" + (_userFolder ?? string.Empty);
+            if (sig == _currentTreeRoot) return;          // same composition already shown
+            _currentTreeRoot = sig;
+
+            _fileTree.ItemsSource = null;
+            _fileTree.Items.Clear();
+
+            if (pkgWd is not null)
+            {
+                var libs = BuildPackageLibsNode(pkgWd, _active!.DisplayName ?? "package");
+                if (libs is not null) { libs.IsExpanded = true; _fileTree.Items.Add(libs); }
+            }
+            if (_userFolder is string f && Directory.Exists(f))
+            {
+                var root = BuildFileNode(new DirectoryInfo(f));
+                if (root is not null) { root.IsExpanded = true; _fileTree.Items.Add(root); }
+            }
+        }
+
+        // A "Libraries · <package>" node listing only the .cpd libraries bundled in the .cpdz
+        // (everything except the package's own worksheet.cpd), each expandable into its functions.
+        private TreeViewItem? BuildPackageLibsNode(string workDir, string pkgName)
+        {
+            var node = new TreeViewItem { Header = "Libraries · " + pkgName };
+            AttachFolderMenu(node, workDir);
+            var mainWorksheet = Path.Combine(workDir, "worksheet.cpd");
+            var any = false;
+            try
+            {
+                foreach (var file in Directory.EnumerateFiles(workDir, "*.cpd", SearchOption.AllDirectories)
+                                              .OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
+                {
+                    if (string.Equals(file, mainWorksheet, StringComparison.OrdinalIgnoreCase)) continue;
+                    var fileNode = new TreeViewItem { Header = Path.GetFileName(file), Tag = file };
+                    foreach (var fn in ScanFunctions(file))
+                        fileNode.Items.Add(new TreeViewItem { Header = "ƒ " + fn.signature, Tag = new FunctionRef(file, fn.call) });
+                    node.Items.Add(fileNode);
+                    any = true;
+                }
+            }
+            catch { /* ignore unreadable package */ }
+            return any ? node : null;
         }
 
         private void CloseDoc(OpenDoc doc)
@@ -1763,12 +1802,11 @@ namespace Calcpad.Avalonia
                 });
                 if (folders.Count == 0) return;
                 var dir = folders[0].Path.LocalPath;
-                if (LoadFolder(dir))
-                {
-                    _userFolder = dir;            // this is the user's browser folder (kept across tab switches)
-                    _currentTreeRoot = dir;
-                    SaveLastFolder(dir);          // remember it for next launch
-                }
+                if (!Directory.Exists(dir)) return;
+                _userFolder = dir;                // the user's browser folder (kept while a .cpdz tab is active)
+                _currentTreeRoot = null;          // force a rebuild
+                UpdateFileBrowserForActiveDoc();
+                SaveLastFolder(dir);              // remember it for next launch
             }
             catch (Exception ex) { _status.Text = "Folder failed: " + ex.Message; }
         }
@@ -1906,8 +1944,8 @@ namespace Calcpad.Avalonia
             if (_state.LastFolder is string dir && Directory.Exists(dir))
             {
                 _userFolder = dir;
-                if (_active?.PackageWorkDir is null && LoadFolder(dir)) // don't clobber a package tab opened at startup
-                    _currentTreeRoot = dir;
+                _currentTreeRoot = null;        // force a rebuild to include the folder
+                UpdateFileBrowserForActiveDoc();
             }
         }
 
