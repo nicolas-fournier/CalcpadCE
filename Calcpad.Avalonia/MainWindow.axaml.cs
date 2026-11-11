@@ -91,6 +91,8 @@ namespace Calcpad.Avalonia
         private string? _currentFile;
         private string? _packagePath;     // the open .cpdz, when editing a package (Save updates it)
         private string? _packageWorkDir;  // its extracted working folder
+        private string? _userFolder;      // the folder the user opened in the browser (restored when no package tab is active)
+        private string? _currentTreeRoot; // the folder currently shown in the browser (avoids needless reloads)
         private readonly string[] _previewFiles;
         private int _previewSlot;
         private bool _ready;
@@ -212,7 +214,8 @@ namespace Calcpad.Avalonia
             public bool Dirty;
             // When the tab represents a .cpdz package, show the package name, not the extracted worksheet.cpd.
             public string? DisplayName;
-            public string? PackagePath;   // the .cpdz on disk, when this tab is a package
+            public string? PackagePath;     // the .cpdz on disk, when this tab is a package
+            public string? PackageWorkDir;  // its extracted folder, shown in the browser while this tab is active
             public string Title => DisplayName ?? (Path is null ? "untitled" : System.IO.Path.GetFileName(Path));
             // The real file on disk this tab maps to (the package, or the plain worksheet).
             public string? DiskPath => PackagePath ?? Path;
@@ -246,7 +249,18 @@ namespace Calcpad.Avalonia
             RebuildTabs();
             UpdateTitle();
             RefreshSnippetsMenuIfModeChanged();
+            UpdateFileBrowserForActiveDoc();
             if (_ready) Render();
+        }
+
+        // The browser shows the active tab's .cpdz contents, else falls back to the user's opened folder.
+        private void UpdateFileBrowserForActiveDoc()
+        {
+            string? target = _active?.PackageWorkDir is string wd && Directory.Exists(wd) ? wd : _userFolder;
+            if (string.Equals(target, _currentTreeRoot, StringComparison.OrdinalIgnoreCase)) return; // already shown
+            if (target is null) return;                 // nothing to show → keep whatever is there
+            if (LoadFolder(target, allFiles: _active?.PackageWorkDir == target))
+                _currentTreeRoot = target;
         }
 
         private void CloseDoc(OpenDoc doc)
@@ -1750,22 +1764,27 @@ namespace Calcpad.Avalonia
                 if (folders.Count == 0) return;
                 var dir = folders[0].Path.LocalPath;
                 if (LoadFolder(dir))
-                    SaveLastFolder(dir); // remember it for next launch
+                {
+                    _userFolder = dir;            // this is the user's browser folder (kept across tab switches)
+                    _currentTreeRoot = dir;
+                    SaveLastFolder(dir);          // remember it for next launch
+                }
             }
             catch (Exception ex) { _status.Text = "Folder failed: " + ex.Message; }
         }
 
-        private bool LoadFolder(string dir)
+        private bool LoadFolder(string dir, bool allFiles = false)
         {
             if (!Directory.Exists(dir)) return false;
             _fileTree.ItemsSource = null;
             _fileTree.Items.Clear();
-            var root = BuildFileNode(new DirectoryInfo(dir));
+            var root = BuildFileNode(new DirectoryInfo(dir), allFiles);
             if (root is null) return false;
             root.IsExpanded = true;
             _fileTree.Items.Add(root);
             return true;
         }
+
 
         // ---- Persisted app state (last folder) ----
 
@@ -1885,7 +1904,11 @@ namespace Calcpad.Avalonia
         private void RestoreLastFolder()
         {
             if (_state.LastFolder is string dir && Directory.Exists(dir))
-                LoadFolder(dir);
+            {
+                _userFolder = dir;
+                if (_active?.PackageWorkDir is null && LoadFolder(dir)) // don't clobber a package tab opened at startup
+                    _currentTreeRoot = dir;
+            }
         }
 
         private sealed class AppState
@@ -1900,17 +1923,18 @@ namespace Calcpad.Avalonia
 
         // Builds a TreeViewItem for a directory: sub-folders first, then *.cpd files, each file
         // expandable into the functions it defines (insertable as a call + #include).
-        private static TreeViewItem? BuildFileNode(DirectoryInfo dir)
+        private static TreeViewItem? BuildFileNode(DirectoryInfo dir, bool allFiles = false)
         {
             TreeViewItem node;
             try
             {
                 node = new TreeViewItem { Header = dir.Name };
+                AttachFolderMenu(node, dir.FullName);
                 foreach (var sub in dir.GetDirectories().OrderBy(d => d.Name))
                 {
                     if ((sub.Attributes & FileAttributes.Hidden) != 0) continue;
-                    var child = BuildFileNode(sub);
-                    if (child is not null) node.Items.Add(child);
+                    var child = BuildFileNode(sub, allFiles);
+                    if (child is not null) { child.IsExpanded = allFiles; node.Items.Add(child); }
                 }
                 foreach (var file in dir.GetFiles("*.cpd").OrderBy(f => f.Name))
                 {
@@ -1923,9 +1947,39 @@ namespace Calcpad.Avalonia
                         });
                     node.Items.Add(fileNode);
                 }
+                // In package view, also list the non-.cpd assets (images, template, manifest…) so the
+                // user sees everything bundled inside the .cpdz, not just the libraries.
+                if (allFiles)
+                    foreach (var file in dir.GetFiles().OrderBy(f => f.Name))
+                    {
+                        if (file.Name.EndsWith(".cpd", StringComparison.OrdinalIgnoreCase)) continue;
+                        node.Items.Add(new TreeViewItem { Header = "· " + file.Name, Tag = file.FullName });
+                    }
             }
             catch { return null; } // unreadable folders are skipped
             return node;
+        }
+
+        // Right-click a folder node → open that folder in the OS file explorer.
+        private static void AttachFolderMenu(TreeViewItem node, string path)
+        {
+            var open = new MenuItem { Header = "Open in Explorer" };
+            open.Click += (_, _) =>
+            {
+                try
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "explorer.exe",
+                        Arguments = $"\"{path}\"",
+                        UseShellExecute = true
+                    });
+                }
+                catch { /* ignore */ }
+            };
+            var menu = new ContextMenu();
+            menu.Items.Add(open);
+            node.ContextMenu = menu;
         }
 
         private sealed record FunctionRef(string FilePath, string Call);
@@ -1965,9 +2019,22 @@ namespace Calcpad.Avalonia
             if (_selectedTag is not string path) return;
             try
             {
-                if (string.Equals(Path.GetExtension(path), ".cpdz", StringComparison.OrdinalIgnoreCase))
+                var ext = Path.GetExtension(path);
+                if (string.Equals(ext, ".cpdz", StringComparison.OrdinalIgnoreCase))
                 {
                     OpenPackage(path);
+                    return;
+                }
+                // Non-text package assets (images, template, manifest…) aren't editable here — reveal them instead.
+                if (!string.Equals(ext, ".cpd", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(ext, ".txt", StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                        { FileName = "explorer.exe", Arguments = $"/select,\"{path}\"", UseShellExecute = true });
+                    }
+                    catch { _status.Text = "Can't open " + Path.GetFileName(path); }
                     return;
                 }
                 _packagePath = null; _packageWorkDir = null;
@@ -3057,11 +3124,17 @@ namespace Calcpad.Avalonia
             OpenOrActivate(wsPath, text);        // loads into a tab; _currentFile = extracted worksheet.cpd
             _packagePath = zipPath;
             _packageWorkDir = workDir;
-            if (_active is not null) { _active.DisplayName = Path.GetFileName(zipPath); _active.PackagePath = zipPath; } // tab shows the .cpdz name
+            if (_active is not null)
+            {
+                _active.DisplayName = Path.GetFileName(zipPath);  // tab shows the .cpdz name
+                _active.PackagePath = zipPath;
+                _active.PackageWorkDir = workDir;                 // browser shows its contents while this tab is active
+            }
             RebuildTabs();
             if (cfg is not null) ApplyConfigJson(cfg);
             UpdateTitle();
             AddRecent(zipPath);
+            UpdateFileBrowserForActiveDoc();     // show the package's libs/images/folders in the browser
             _status.Text = "Opened package " + Path.GetFileName(zipPath);
         }
 
