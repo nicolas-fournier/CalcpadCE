@@ -91,7 +91,9 @@ namespace Calcpad.Avalonia
         private string? _currentFile;
         private string? _packagePath;     // the open .cpdz, when editing a package (Save updates it)
         private string? _packageWorkDir;  // its extracted working folder
-        private string? _userFolder;      // the folder the user opened in the browser (restored when no package tab is active)
+        private readonly List<string> _userFolders = new();   // folders the user added to the browser (kept together)
+        private readonly List<System.IO.FileSystemWatcher> _folderWatchers = new();
+        private global::Avalonia.Threading.DispatcherTimer? _browserRefreshTimer;
         private string? _currentTreeRoot; // signature of what the browser currently shows (avoids needless reloads)
         private TextBox _fileFilter;
         private TextBlock _fileEmptyHint;
@@ -164,6 +166,7 @@ namespace Calcpad.Avalonia
             InitLineNumberToggle();
             try { _editor.TextArea.LeftMargins.Add(new CalcGutterMargin(ClassifyLineBadge, ToggleLineByOffset)); } catch { }
             BuildEditorContextMenu();
+            InitEditorDrop();
             BuildKeypad();
             BuildFormatBar();
             BuildOptionsBar();
@@ -321,7 +324,7 @@ namespace Calcpad.Avalonia
         private void UpdateFileBrowserForActiveDoc()
         {
             var pkgWd = _active?.PackageWorkDir is string wd && Directory.Exists(wd) ? wd : null;
-            var sig = (pkgWd ?? string.Empty) + "|" + (_userFolder ?? string.Empty) + "|" + _fileFilterText;
+            var sig = (pkgWd ?? string.Empty) + "|" + string.Join(";", _userFolders) + "|" + _fileFilterText;
             if (sig == _currentTreeRoot) return;          // same composition already shown
             _currentTreeRoot = sig;
 
@@ -335,10 +338,13 @@ namespace Calcpad.Avalonia
                 var libs = BuildPackageLibsNode(pkgWd, _active!.DisplayName ?? "package");
                 if (libs is not null) { libs.IsExpanded = true; _fileTree.Items.Add(libs); }
             }
-            if (_userFolder is string f && Directory.Exists(f))
+            foreach (var f in _userFolders)
             {
-                var root = BuildFileNode(new DirectoryInfo(f), 0);
+                if (!Directory.Exists(f)) continue;
+                var root = BuildFileNode(new DirectoryInfo(f), 0, isRoot: true);
                 if (root is not null) { root.IsExpanded = true; _fileTree.Items.Add(root); }
+                else if (_fileFilterText.Length == 0)
+                    _fileTree.Items.Add(new TreeViewItem { Header = Row("○", ColAsset, Path.GetFileName(f) + " (unreadable)"), Tag = new DirRef(f) });
             }
 
             ApplyExpanded(expanded, restoreSelection: selected);
@@ -409,8 +415,9 @@ namespace Calcpad.Avalonia
                     if (!PassesFilter(Path.GetFileName(file), fns)) continue;
                     var fileNode = new TreeViewItem { Header = Row("●", ColCpd, Path.GetFileName(file)), Tag = file };
                     AttachFileMenu(fileNode, file, isPackageLib: true);
+                    EnableDrag(fileNode, file);
                     foreach (var fn in fns)
-                        if (PassesFilter(fn.signature)) { var fi = FunctionItem(file, fn); AttachFunctionMenu(fi, file, fn.call); fileNode.Items.Add(fi); }
+                        if (PassesFilter(fn.signature)) { var fi = FunctionItem(file, fn); AttachFunctionMenu(fi, file, fn.call); EnableDrag(fi, new FunctionRef(file, fn.call)); fileNode.Items.Add(fi); }
                     node.Items.Add(fileNode);
                     any = true;
                 }
@@ -1914,18 +1921,77 @@ namespace Calcpad.Avalonia
             {
                 var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
                 {
-                    Title = "Open a folder of Calcpad worksheets",
-                    AllowMultiple = false
+                    Title = "Add a folder of Calcpad worksheets",
+                    AllowMultiple = true
                 });
                 if (folders.Count == 0) return;
-                var dir = folders[0].Path.LocalPath;
-                if (!Directory.Exists(dir)) return;
-                _userFolder = dir;                // the user's browser folder (kept while a .cpdz tab is active)
-                _currentTreeRoot = null;          // force a rebuild
-                UpdateFileBrowserForActiveDoc();
-                SaveLastFolder(dir);              // remember it for next launch
+                foreach (var folder in folders)
+                {
+                    var dir = folder.Path.LocalPath;
+                    if (Directory.Exists(dir) && !_userFolders.Any(p => string.Equals(p, dir, StringComparison.OrdinalIgnoreCase)))
+                        _userFolders.Add(dir);     // ADD (keep existing folders), don't replace
+                }
+                RefreshBrowser();
+                SaveFolders();
             }
             catch (Exception ex) { _status.Text = "Folder failed: " + ex.Message; }
+        }
+
+        private void RemoveUserFolder(string dir)
+        {
+            _userFolders.RemoveAll(p => string.Equals(p, dir, StringComparison.OrdinalIgnoreCase));
+            RefreshBrowser();
+            SaveFolders();
+            _status.Text = "Removed from browser: " + Path.GetFileName(dir);
+        }
+
+        // Forces a full browser rebuild (also re-arms the folder watchers).
+        private void RefreshBrowser()
+        {
+            _currentTreeRoot = null;
+            UpdateFileBrowserForActiveDoc();
+            RearmFolderWatchers();
+        }
+
+        // Watch the user's folders so external file add/rename/delete shows up without re-opening.
+        private void RearmFolderWatchers()
+        {
+            foreach (var w in _folderWatchers) { try { w.Dispose(); } catch { } }
+            _folderWatchers.Clear();
+            foreach (var dir in _userFolders)
+            {
+                if (!Directory.Exists(dir)) continue;
+                try
+                {
+                    var w = new System.IO.FileSystemWatcher(dir)
+                    {
+                        IncludeSubdirectories = true,
+                        NotifyFilter = System.IO.NotifyFilters.FileName | System.IO.NotifyFilters.DirectoryName | System.IO.NotifyFilters.LastWrite,
+                        EnableRaisingEvents = true
+                    };
+                    void OnChange(object? _, System.IO.FileSystemEventArgs __) => Dispatcher.UIThread.Post(DebouncedBrowserRefresh);
+                    w.Created += OnChange; w.Deleted += OnChange; w.Renamed += (_, __) => Dispatcher.UIThread.Post(DebouncedBrowserRefresh);
+                    _folderWatchers.Add(w);
+                }
+                catch { /* watching is best-effort */ }
+            }
+        }
+
+        // Coalesce bursts of filesystem events into a single rebuild.
+        private void DebouncedBrowserRefresh()
+        {
+            _browserRefreshTimer ??= new global::Avalonia.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+            _browserRefreshTimer.Tick -= BrowserRefreshTick;
+            _browserRefreshTimer.Tick += BrowserRefreshTick;
+            _browserRefreshTimer.Stop();
+            _browserRefreshTimer.Start();
+        }
+
+        private void BrowserRefreshTick(object? sender, EventArgs e)
+        {
+            _browserRefreshTimer?.Stop();
+            _currentTreeRoot = null;
+            UpdateFileBrowserForActiveDoc();
         }
 
         // ---- Persisted app state (last folder) ----
@@ -1950,6 +2016,7 @@ namespace Calcpad.Avalonia
             }
             catch { _state = new AppState(); }
             _state.RecentFiles ??= new(); // old state files won't have the field
+            _state.Folders ??= new();
             _useTemplate = _state.UseTemplate;
         }
 
@@ -1965,9 +2032,10 @@ namespace Calcpad.Avalonia
             catch { /* best effort */ }
         }
 
-        private void SaveLastFolder(string dir)
+        private void SaveFolders()
         {
-            _state.LastFolder = dir;
+            _state.Folders = new List<string>(_userFolders);
+            _state.LastFolder = _userFolders.LastOrDefault(); // back-compat
             SaveState();
         }
 
@@ -2045,17 +2113,19 @@ namespace Calcpad.Avalonia
 
         private void RestoreLastFolder()
         {
-            if (_state.LastFolder is string dir && Directory.Exists(dir))
-            {
-                _userFolder = dir;
-                _currentTreeRoot = null;        // force a rebuild to include the folder
-                UpdateFileBrowserForActiveDoc();
-            }
+            _userFolders.Clear();
+            var saved = (_state.Folders is { Count: > 0 } ? _state.Folders
+                        : _state.LastFolder is string lf ? new List<string> { lf } : new List<string>());
+            foreach (var dir in saved)
+                if (Directory.Exists(dir) && !_userFolders.Any(p => string.Equals(p, dir, StringComparison.OrdinalIgnoreCase)))
+                    _userFolders.Add(dir);
+            RefreshBrowser();
         }
 
         private sealed class AppState
         {
-            public string? LastFolder { get; set; }
+            public string? LastFolder { get; set; }       // legacy single folder (migrated into Folders)
+            public List<string> Folders { get; set; } = new(); // all folders kept in the browser
             public string? TemplateFolder { get; set; }  // folder/share holding the Word templates
             public string? LastTemplate { get; set; }    // selected Word template used for export
             public bool UseTemplate { get; set; }         // master toggle for template-based export
@@ -2067,14 +2137,14 @@ namespace Calcpad.Avalonia
 
         // Builds a TreeViewItem for a directory: sub-folders first, then *.cpd files (each expandable
         // into its functions), honouring the live filter. Guards against symlink loops / deep nesting.
-        private TreeViewItem? BuildFileNode(DirectoryInfo dir, int depth)
+        private TreeViewItem? BuildFileNode(DirectoryInfo dir, int depth, bool isRoot = false)
         {
             if (depth > MaxTreeDepth) return null;
             TreeViewItem node;
             try
             {
-                node = new TreeViewItem { Header = Row("○", ColFolder, dir.Name), Tag = new DirRef(dir.FullName) };
-                AttachFolderMenu(node, dir.FullName);
+                node = new TreeViewItem { Header = Row("○", ColFolder, dir.Name, bold: isRoot), Tag = new DirRef(dir.FullName) };
+                AttachFolderMenu(node, dir.FullName, isRoot);
                 foreach (var sub in dir.GetDirectories().OrderBy(d => d.Name))
                 {
                     if ((sub.Attributes & (FileAttributes.Hidden | FileAttributes.ReparsePoint)) != 0) continue; // skip hidden + junctions/symlinks
@@ -2087,22 +2157,29 @@ namespace Calcpad.Avalonia
                     if (!PassesFilter(file.Name, fns)) continue;
                     var fileNode = new TreeViewItem { Header = Row("●", ColCpd, file.Name), Tag = file.FullName };
                     AttachFileMenu(fileNode, file.FullName, isPackageLib: false);
+                    EnableDrag(fileNode, file.FullName);
                     foreach (var fn in fns)
-                        if (PassesFilter(fn.signature)) { var fi = FunctionItem(file.FullName, fn); AttachFunctionMenu(fi, file.FullName, fn.call); fileNode.Items.Add(fi); }
+                        if (PassesFilter(fn.signature)) { var fi = FunctionItem(file.FullName, fn); AttachFunctionMenu(fi, file.FullName, fn.call); EnableDrag(fi, new FunctionRef(file.FullName, fn.call)); fileNode.Items.Add(fi); }
                     node.Items.Add(fileNode);
                 }
             }
             catch { return null; } // unreadable folders are skipped
-            // Hide an empty folder while filtering (nothing matched inside it).
-            return (_fileFilterText.Length > 0 && node.Items.Count == 0) ? null : node;
+            // A root stays visible even when empty (so the user can remove it); nested empties are hidden while filtering.
+            return (!isRoot && _fileFilterText.Length > 0 && node.Items.Count == 0) ? null : node;
         }
 
-        // Right-click a folder node → open that folder in the OS file explorer.
-        private void AttachFolderMenu(TreeViewItem node, string path)
+        // Right-click a folder node → open / copy / (roots: refresh, remove from browser).
+        private void AttachFolderMenu(TreeViewItem node, string path, bool isRoot = false)
         {
             var menu = new ContextMenu();
             menu.Items.Add(MenuItemFor("Open in Explorer", () => RevealPath(path, select: false)));
             menu.Items.Add(MenuItemFor("Copy path", () => _ = CopyTextToClipboard(path)));
+            if (isRoot)
+            {
+                menu.Items.Add(new Separator());
+                menu.Items.Add(MenuItemFor("Refresh", RefreshBrowser));
+                menu.Items.Add(MenuItemFor("Remove from browser", () => RemoveUserFolder(path)));
+            }
             node.ContextMenu = menu;
         }
 
@@ -2158,6 +2235,52 @@ namespace Calcpad.Avalonia
         private async System.Threading.Tasks.Task InsertIncludeFor(string path)
             => InsertAtCaret($"#include {BuildLinkedPath(await MaybeCopyIntoFolder(path))}\n");
 
+        // ---- Drag a file/function from the browser onto the editor to insert it ----
+
+        private const string DragFormat = "calcpad/insert";
+
+        private void EnableDrag(Control node, object payload)
+        {
+            var start = new global::Avalonia.Point();
+            var armed = false;
+            node.PointerPressed += (_, e) =>
+            {
+                armed = e.GetCurrentPoint(node).Properties.IsLeftButtonPressed;
+                start = e.GetPosition(node);
+            };
+            node.PointerReleased += (_, _) => armed = false;
+            node.PointerMoved += async (_, e) =>
+            {
+                if (!armed) return;
+                var p = e.GetPosition(node);
+                if (Math.Abs(p.X - start.X) < 6 && Math.Abs(p.Y - start.Y) < 6) return;
+                armed = false;
+                var data = new global::Avalonia.Input.DataObject();
+                data.Set(DragFormat, payload);
+                try { await global::Avalonia.Input.DragDrop.DoDragDrop(e, data, global::Avalonia.Input.DragDropEffects.Copy); } catch { }
+            };
+        }
+
+        private void InitEditorDrop()
+        {
+            global::Avalonia.Input.DragDrop.SetAllowDrop(_editor, true);
+            _editor.AddHandler(global::Avalonia.Input.DragDrop.DragOverEvent, (object? _, global::Avalonia.Input.DragEventArgs e) =>
+            {
+                e.DragEffects = e.Data.Contains(DragFormat)
+                    ? global::Avalonia.Input.DragDropEffects.Copy
+                    : global::Avalonia.Input.DragDropEffects.None;
+            });
+            _editor.AddHandler(global::Avalonia.Input.DragDrop.DropEvent, async (object? _, global::Avalonia.Input.DragEventArgs e) =>
+            {
+                var payload = e.Data.Get(DragFormat);
+                if (payload is null) return;
+                var pos = _editor.GetPositionFromPoint(e.GetPosition(_editor.TextArea.TextView));
+                if (pos.HasValue) { _editor.CaretOffset = _editor.Document.GetOffset(pos.Value.Location); _editor.SelectionLength = 0; }
+                if (payload is FunctionRef fr) await InsertFunction(fr);
+                else if (payload is string path) await InsertIncludeFor(path);
+            });
+        }
+
         private sealed record FunctionRef(string FilePath, string Call);
         private sealed record DirRef(string Path);
 
@@ -2170,7 +2293,13 @@ namespace Calcpad.Avalonia
         private static IEnumerable<(string signature, string call)> ScanFunctions(string path)
         {
             string[] lines;
-            try { lines = File.ReadAllLines(path); } catch { yield break; }
+            try
+            {
+                var info = new FileInfo(path);
+                if (info.Length > 2_000_000) yield break; // don't stall the UI scanning multi-MB files
+                lines = File.ReadAllLines(path);
+            }
+            catch { yield break; }
             foreach (var line in lines)
             {
                 var m = MacroDefRegex.Match(line);
