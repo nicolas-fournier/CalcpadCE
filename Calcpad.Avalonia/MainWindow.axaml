@@ -34,6 +34,10 @@
       <Setter Property="MinHeight" Value="0"/>
       <Setter Property="Padding" Value="4,2"/>
     </Style>
+    <Style Selector="TreeViewItem">
+      <Setter Property="MinHeight" Value="0"/>
+      <Setter Property="Padding" Value="2,1"/>
+    </Style>
   </Window.Styles>
 
   <DockPanel>
@@ -120,13 +124,22 @@
       <Border x:Name="FilePanel" Grid.Column="0" Background="#FAFAFB"
               BorderBrush="#E2E4E8" BorderThickness="0,0,1,0">
         <DockPanel>
-          <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="6" Margin="8,8,8,4">
-            <TextBlock Text="Files" FontWeight="SemiBold" VerticalAlignment="Center"/>
-            <Button Content="Open folder…" Click="OpenFolder_Click" Padding="6,2"/>
-            <Button Content="Insert" Click="InsertFile_Click" Padding="6,2"
-                    ToolTip.Tip="Insert #include for the selected file at the caret"/>
-          </StackPanel>
-          <TreeView x:Name="FileTree" SelectionChanged="FileTree_SelectionChanged" Margin="4"/>
+          <Grid DockPanel.Dock="Top" Margin="8,8,8,4" ColumnDefinitions="*,Auto,Auto">
+            <TextBlock Grid.Column="0" Text="Files" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            <Button Grid.Column="1" Content="Open…" Click="OpenFolder_Click" Padding="6,2" Margin="0,0,4,0"
+                    ToolTip.Tip="Open a folder in the browser (kept alongside package libraries)"/>
+            <Button Grid.Column="2" x:Name="InsertFileBtn" Content="Insert" Click="InsertFile_Click" Padding="6,2"
+                    IsEnabled="False" ToolTip.Tip="Insert the selected file (#include) or function (call) at the caret"/>
+          </Grid>
+          <TextBox x:Name="FileFilter" DockPanel.Dock="Top" Margin="8,0,8,4"
+                   Watermark="Filter files &amp; functions…" TextChanged="FileFilter_Changed"/>
+          <Panel>
+            <TreeView x:Name="FileTree" SelectionChanged="FileTree_SelectionChanged" Margin="2,2,0,0"/>
+            <TextBlock x:Name="FileEmptyHint" IsVisible="False" Foreground="#9CA3AF"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"
+                       TextWrapping="Wrap" MaxWidth="180"
+                       Text="No folder open.&#x0a;Use “Open…” to browse worksheets."/>
+          </Panel>
         </DockPanel>
       </Border>
 

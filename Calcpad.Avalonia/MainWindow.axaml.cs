@@ -92,7 +92,11 @@ namespace Calcpad.Avalonia
         private string? _packagePath;     // the open .cpdz, when editing a package (Save updates it)
         private string? _packageWorkDir;  // its extracted working folder
         private string? _userFolder;      // the folder the user opened in the browser (restored when no package tab is active)
-        private string? _currentTreeRoot; // the folder currently shown in the browser (avoids needless reloads)
+        private string? _currentTreeRoot; // signature of what the browser currently shows (avoids needless reloads)
+        private TextBox _fileFilter;
+        private TextBlock _fileEmptyHint;
+        private Button _insertFileBtn;
+        private string _fileFilterText = string.Empty;
         private readonly string[] _previewFiles;
         private int _previewSlot;
         private bool _ready;
@@ -135,6 +139,10 @@ namespace Calcpad.Avalonia
             _fileSplitter = this.FindControl<GridSplitter>("FileSplitter")!;
             _aiSplitter = this.FindControl<GridSplitter>("AiSplitter")!;
             _fileTree = this.FindControl<TreeView>("FileTree")!;
+            _fileFilter = this.FindControl<TextBox>("FileFilter")!;
+            _fileEmptyHint = this.FindControl<TextBlock>("FileEmptyHint")!;
+            _insertFileBtn = this.FindControl<Button>("InsertFileBtn")!;
+            _fileTree.KeyDown += FileTree_KeyDown;
             _optionsBar = this.FindControl<Border>("OptionsBar")!;
             _filesToggle = this.FindControl<ToggleButton>("FilesToggle")!;
             _keypadToggle = this.FindControl<ToggleButton>("KeypadToggle")!;
@@ -216,6 +224,7 @@ namespace Calcpad.Avalonia
             public string? DisplayName;
             public string? PackagePath;     // the .cpdz on disk, when this tab is a package
             public string? PackageWorkDir;  // its extracted folder, shown in the browser while this tab is active
+            public bool ReadOnly;           // true for a bundled library opened from the package temp dir
             public string Title => DisplayName ?? (Path is null ? "untitled" : System.IO.Path.GetFileName(Path));
             // The real file on disk this tab maps to (the package, or the plain worksheet).
             public string? DiskPath => PackagePath ?? Path;
@@ -243,9 +252,13 @@ namespace Calcpad.Avalonia
             _editor.Document = doc.Doc;
             _currentFile = doc.Path;
             _dirty = doc.Dirty;
+            // Restore the per-tab package context so Save routes correctly after a tab switch.
+            _packagePath = doc.PackagePath;
+            _packageWorkDir = doc.PackageWorkDir;
             _inputValues.Clear();
             _switching = false;
 
+            ApplyReadOnly();
             RebuildTabs();
             UpdateTitle();
             RefreshSnippetsMenuIfModeChanged();
@@ -253,15 +266,67 @@ namespace Calcpad.Avalonia
             if (_ready) Render();
         }
 
+        // ---- File-browser palette & row helpers ----
+
+        private const string ColFolder = "#6B7280", ColCpd = "#1F7FAE", ColFn = "#C2410C",
+                             ColAsset = "#9CA3AF", ColPkg = "#7C3AED", ColLabel = "#1F2937";
+
+        // A row = fixed-width colored glyph gutter + label (functions get a dimmed mono "(params)").
+        private static Control Row(string glyph, string glyphColor, string label, bool bold = false, string? dimSuffix = null)
+        {
+            var sp = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+            sp.Children.Add(new TextBlock
+            {
+                Text = glyph,
+                Width = 14,
+                TextAlignment = global::Avalonia.Media.TextAlignment.Center,
+                Foreground = new SolidColorBrush(Color.Parse(glyphColor)),
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            sp.Children.Add(new TextBlock
+            {
+                Text = label,
+                Foreground = new SolidColorBrush(Color.Parse(ColLabel)),
+                FontWeight = bold ? FontWeight.SemiBold : FontWeight.Normal,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            if (dimSuffix is not null)
+                sp.Children.Add(new TextBlock
+                {
+                    Text = dimSuffix,
+                    Foreground = new SolidColorBrush(Color.Parse(ColAsset)),
+                    FontFamily = new global::Avalonia.Media.FontFamily("Cascadia Code,Consolas,monospace"),
+                    VerticalAlignment = VerticalAlignment.Center
+                });
+            return sp;
+        }
+
+        private static TreeViewItem FunctionItem(string file, (string signature, string call) fn)
+        {
+            var paren = fn.signature.IndexOf('(');
+            var name = paren < 0 ? fn.signature : fn.signature[..paren];
+            var pars = paren < 0 ? null : fn.signature[paren..];
+            return new TreeViewItem { Header = Row("ƒ", ColFn, name, dimSuffix: pars), Tag = new FunctionRef(file, fn.call) };
+        }
+
+        private bool PassesFilter(string name, IEnumerable<(string signature, string call)>? fns = null)
+        {
+            if (_fileFilterText.Length == 0) return true;
+            if (name.Contains(_fileFilterText, StringComparison.OrdinalIgnoreCase)) return true;
+            return fns is not null && fns.Any(f => f.signature.Contains(_fileFilterText, StringComparison.OrdinalIgnoreCase));
+        }
+
         // The browser always keeps the user's opened folder, and — while a .cpdz tab is active —
         // ALSO shows a top node with just that package's own libraries.
         private void UpdateFileBrowserForActiveDoc()
         {
             var pkgWd = _active?.PackageWorkDir is string wd && Directory.Exists(wd) ? wd : null;
-            var sig = (pkgWd ?? string.Empty) + "|" + (_userFolder ?? string.Empty);
+            var sig = (pkgWd ?? string.Empty) + "|" + (_userFolder ?? string.Empty) + "|" + _fileFilterText;
             if (sig == _currentTreeRoot) return;          // same composition already shown
             _currentTreeRoot = sig;
 
+            var expanded = CaptureExpanded();
+            var selected = _selectedTag;
             _fileTree.ItemsSource = null;
             _fileTree.Items.Clear();
 
@@ -272,28 +337,80 @@ namespace Calcpad.Avalonia
             }
             if (_userFolder is string f && Directory.Exists(f))
             {
-                var root = BuildFileNode(new DirectoryInfo(f));
+                var root = BuildFileNode(new DirectoryInfo(f), 0);
                 if (root is not null) { root.IsExpanded = true; _fileTree.Items.Add(root); }
             }
+
+            ApplyExpanded(expanded, restoreSelection: selected);
+            _fileEmptyHint.IsVisible = _fileTree.Items.Count == 0 && _fileFilterText.Length == 0;
         }
+
+        private void FileFilter_Changed(object? sender, global::Avalonia.Controls.TextChangedEventArgs e)
+        {
+            _fileFilterText = (_fileFilter.Text ?? string.Empty).Trim();
+            _currentTreeRoot = null;           // force a rebuild for the new filter
+            UpdateFileBrowserForActiveDoc();
+        }
+
+        // Records the keys (D:dir / F:file) of expanded nodes so a rebuild can restore them.
+        private HashSet<string> CaptureExpanded()
+        {
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            void Walk(global::Avalonia.Controls.ItemsControl node)
+            {
+                foreach (var obj in node.Items)
+                    if (obj is TreeViewItem tvi)
+                    {
+                        if (tvi.IsExpanded && NodeKey(tvi.Tag) is string k) set.Add(k);
+                        Walk(tvi);
+                    }
+            }
+            Walk(_fileTree);
+            return set;
+        }
+
+        private void ApplyExpanded(HashSet<string> expanded, object? restoreSelection)
+        {
+            void Walk(global::Avalonia.Controls.ItemsControl node)
+            {
+                foreach (var obj in node.Items)
+                    if (obj is TreeViewItem tvi)
+                    {
+                        if (NodeKey(tvi.Tag) is string k && expanded.Contains(k)) tvi.IsExpanded = true;
+                        if (_fileFilterText.Length > 0) tvi.IsExpanded = true; // a filtered tree reads better expanded
+                        if (restoreSelection is not null && Equals(tvi.Tag, restoreSelection)) tvi.IsSelected = true;
+                        Walk(tvi);
+                    }
+            }
+            Walk(_fileTree);
+        }
+
+        private static string? NodeKey(object? tag) => tag switch
+        {
+            DirRef d => "D:" + d.Path,
+            string s => "F:" + s,
+            _ => null
+        };
 
         // A "Libraries · <package>" node listing only the .cpd libraries bundled in the .cpdz
         // (everything except the package's own worksheet.cpd), each expandable into its functions.
         private TreeViewItem? BuildPackageLibsNode(string workDir, string pkgName)
         {
-            var node = new TreeViewItem { Header = "Libraries · " + pkgName };
+            var node = new TreeViewItem { Header = Row("●", ColPkg, "Libraries · " + pkgName, bold: true), Tag = new DirRef(workDir) };
             AttachFolderMenu(node, workDir);
-            var mainWorksheet = Path.Combine(workDir, "worksheet.cpd");
             var any = false;
             try
             {
                 foreach (var file in Directory.EnumerateFiles(workDir, "*.cpd", SearchOption.AllDirectories)
                                               .OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
                 {
-                    if (string.Equals(file, mainWorksheet, StringComparison.OrdinalIgnoreCase)) continue;
-                    var fileNode = new TreeViewItem { Header = Path.GetFileName(file), Tag = file };
-                    foreach (var fn in ScanFunctions(file))
-                        fileNode.Items.Add(new TreeViewItem { Header = "ƒ " + fn.signature, Tag = new FunctionRef(file, fn.call) });
+                    if (string.Equals(Path.GetFileName(file), "worksheet.cpd", StringComparison.OrdinalIgnoreCase)) continue;
+                    var fns = ScanFunctions(file).ToList();
+                    if (!PassesFilter(Path.GetFileName(file), fns)) continue;
+                    var fileNode = new TreeViewItem { Header = Row("●", ColCpd, Path.GetFileName(file)), Tag = file };
+                    AttachFileMenu(fileNode, file, isPackageLib: true);
+                    foreach (var fn in fns)
+                        if (PassesFilter(fn.signature)) { var fi = FunctionItem(file, fn); AttachFunctionMenu(fi, file, fn.call); fileNode.Items.Add(fi); }
                     node.Items.Add(fileNode);
                     any = true;
                 }
@@ -1811,19 +1928,6 @@ namespace Calcpad.Avalonia
             catch (Exception ex) { _status.Text = "Folder failed: " + ex.Message; }
         }
 
-        private bool LoadFolder(string dir, bool allFiles = false)
-        {
-            if (!Directory.Exists(dir)) return false;
-            _fileTree.ItemsSource = null;
-            _fileTree.Items.Clear();
-            var root = BuildFileNode(new DirectoryInfo(dir), allFiles);
-            if (root is null) return false;
-            root.IsExpanded = true;
-            _fileTree.Items.Add(root);
-            return true;
-        }
-
-
         // ---- Persisted app state (last folder) ----
 
         private static string StateFile => Path.Combine(
@@ -1959,68 +2063,103 @@ namespace Calcpad.Avalonia
             public List<string> RecentFiles { get; set; } = new(); // most-recently opened .cpd / .cpdz, newest first
         }
 
-        // Builds a TreeViewItem for a directory: sub-folders first, then *.cpd files, each file
-        // expandable into the functions it defines (insertable as a call + #include).
-        private static TreeViewItem? BuildFileNode(DirectoryInfo dir, bool allFiles = false)
+        private const int MaxTreeDepth = 16;
+
+        // Builds a TreeViewItem for a directory: sub-folders first, then *.cpd files (each expandable
+        // into its functions), honouring the live filter. Guards against symlink loops / deep nesting.
+        private TreeViewItem? BuildFileNode(DirectoryInfo dir, int depth)
         {
+            if (depth > MaxTreeDepth) return null;
             TreeViewItem node;
             try
             {
-                node = new TreeViewItem { Header = dir.Name };
+                node = new TreeViewItem { Header = Row("○", ColFolder, dir.Name), Tag = new DirRef(dir.FullName) };
                 AttachFolderMenu(node, dir.FullName);
                 foreach (var sub in dir.GetDirectories().OrderBy(d => d.Name))
                 {
-                    if ((sub.Attributes & FileAttributes.Hidden) != 0) continue;
-                    var child = BuildFileNode(sub, allFiles);
-                    if (child is not null) { child.IsExpanded = allFiles; node.Items.Add(child); }
+                    if ((sub.Attributes & (FileAttributes.Hidden | FileAttributes.ReparsePoint)) != 0) continue; // skip hidden + junctions/symlinks
+                    var child = BuildFileNode(sub, depth + 1);
+                    if (child is not null) node.Items.Add(child);
                 }
                 foreach (var file in dir.GetFiles("*.cpd").OrderBy(f => f.Name))
                 {
-                    var fileNode = new TreeViewItem { Header = file.Name, Tag = file.FullName };
-                    foreach (var fn in ScanFunctions(file.FullName))
-                        fileNode.Items.Add(new TreeViewItem
-                        {
-                            Header = "ƒ " + fn.signature,
-                            Tag = new FunctionRef(file.FullName, fn.call)
-                        });
+                    var fns = ScanFunctions(file.FullName).ToList();
+                    if (!PassesFilter(file.Name, fns)) continue;
+                    var fileNode = new TreeViewItem { Header = Row("●", ColCpd, file.Name), Tag = file.FullName };
+                    AttachFileMenu(fileNode, file.FullName, isPackageLib: false);
+                    foreach (var fn in fns)
+                        if (PassesFilter(fn.signature)) { var fi = FunctionItem(file.FullName, fn); AttachFunctionMenu(fi, file.FullName, fn.call); fileNode.Items.Add(fi); }
                     node.Items.Add(fileNode);
                 }
-                // In package view, also list the non-.cpd assets (images, template, manifest…) so the
-                // user sees everything bundled inside the .cpdz, not just the libraries.
-                if (allFiles)
-                    foreach (var file in dir.GetFiles().OrderBy(f => f.Name))
-                    {
-                        if (file.Name.EndsWith(".cpd", StringComparison.OrdinalIgnoreCase)) continue;
-                        node.Items.Add(new TreeViewItem { Header = "· " + file.Name, Tag = file.FullName });
-                    }
             }
             catch { return null; } // unreadable folders are skipped
-            return node;
+            // Hide an empty folder while filtering (nothing matched inside it).
+            return (_fileFilterText.Length > 0 && node.Items.Count == 0) ? null : node;
         }
 
         // Right-click a folder node → open that folder in the OS file explorer.
-        private static void AttachFolderMenu(TreeViewItem node, string path)
+        private void AttachFolderMenu(TreeViewItem node, string path)
         {
-            var open = new MenuItem { Header = "Open in Explorer" };
-            open.Click += (_, _) =>
-            {
-                try
-                {
-                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                    {
-                        FileName = "explorer.exe",
-                        Arguments = $"\"{path}\"",
-                        UseShellExecute = true
-                    });
-                }
-                catch { /* ignore */ }
-            };
             var menu = new ContextMenu();
-            menu.Items.Add(open);
+            menu.Items.Add(MenuItemFor("Open in Explorer", () => RevealPath(path, select: false)));
+            menu.Items.Add(MenuItemFor("Copy path", () => _ = CopyTextToClipboard(path)));
             node.ContextMenu = menu;
         }
 
+        // Right-click a .cpd file → open / insert / copy / reveal.
+        private void AttachFileMenu(TreeViewItem node, string path, bool isPackageLib)
+        {
+            var menu = new ContextMenu();
+            menu.Items.Add(MenuItemFor(isPackageLib ? "Open (read-only)" : "Open", () => _ = OpenFromBrowser(path, isPackageLib)));
+            menu.Items.Add(MenuItemFor("Insert #include", () => _ = InsertIncludeFor(path)));
+            menu.Items.Add(new Separator());
+            menu.Items.Add(MenuItemFor("Copy path", () => _ = CopyTextToClipboard(path)));
+            menu.Items.Add(MenuItemFor("Reveal in Explorer", () => RevealPath(path, select: true)));
+            node.ContextMenu = menu;
+        }
+
+        // Right-click a function → insert its call (and its #include) or just the #include.
+        private void AttachFunctionMenu(TreeViewItem node, string file, string call)
+        {
+            var menu = new ContextMenu();
+            menu.Items.Add(MenuItemFor("Insert call", () => _ = InsertFunction(new FunctionRef(file, call))));
+            menu.Items.Add(MenuItemFor("Insert #include only", () => _ = InsertIncludeFor(file)));
+            menu.Items.Add(MenuItemFor("Copy name", () => _ = CopyTextToClipboard(call)));
+            node.ContextMenu = menu;
+        }
+
+        private static MenuItem MenuItemFor(string header, Action action)
+        {
+            var mi = new MenuItem { Header = header };
+            mi.Click += (_, _) => action();
+            return mi;
+        }
+
+        private static void RevealPath(string path, bool select)
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = select ? $"/select,\"{path}\"" : $"\"{path}\"",
+                    UseShellExecute = true
+                });
+            }
+            catch { /* ignore */ }
+        }
+
+        private async System.Threading.Tasks.Task CopyTextToClipboard(string text)
+        {
+            var cb = global::Avalonia.Controls.TopLevel.GetTopLevel(this)?.Clipboard;
+            if (cb is not null) { await cb.SetTextAsync(text); _status.Text = "Copied: " + text; }
+        }
+
+        private async System.Threading.Tasks.Task InsertIncludeFor(string path)
+            => InsertAtCaret($"#include {BuildLinkedPath(await MaybeCopyIntoFolder(path))}\n");
+
         private sealed record FunctionRef(string FilePath, string Call);
+        private sealed record DirRef(string Path);
 
         private static readonly System.Text.RegularExpressions.Regex MacroDefRegex =
             new(@"^\s*#def\s+([A-Za-z_][A-Za-z0-9_]*\$?)\s*(?:\(([^)]*)\))?", System.Text.RegularExpressions.RegexOptions.Compiled);
@@ -2049,38 +2188,67 @@ namespace Calcpad.Avalonia
         private void FileTree_SelectionChanged(object? sender, SelectionChangedEventArgs e)
         {
             _selectedTag = (_fileTree.SelectedItem as TreeViewItem)?.Tag;
+            // Live-relabel the Insert button to what it will do (file → #include, function → call).
+            if (_insertFileBtn is not null)
+                (_insertFileBtn.Content, _insertFileBtn.IsEnabled) = _selectedTag switch
+                {
+                    FunctionRef => ("Insert call", true),
+                    string => ("Insert #include", true),
+                    _ => ("Insert", false)
+                };
+        }
+
+        private void FileTree_KeyDown(object? sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter)
+            {
+                if (e.KeyModifiers.HasFlag(KeyModifiers.Control)) InsertFile_Click(this, new RoutedEventArgs());
+                else OpenSelectedFile();
+                e.Handled = true;
+            }
         }
 
         private async void OpenSelectedFile()
         {
             if (_selectedTag is FunctionRef fr) { await InsertFunction(fr); return; }
+            if (_selectedTag is DirRef) return;                 // folders expand via the chevron
             if (_selectedTag is not string path) return;
+            var isLib = _active?.PackageWorkDir is string wd && path.StartsWith(wd, StringComparison.OrdinalIgnoreCase);
+            await OpenFromBrowser(path, isLib);
+        }
+
+        // Opens a file picked in the browser. .cpdz → package; non-text asset → reveal; a bundled
+        // library → read-only view (editing a temp-extracted lib would be silently lost).
+        private async System.Threading.Tasks.Task OpenFromBrowser(string path, bool isPackageLib)
+        {
             try
             {
                 var ext = Path.GetExtension(path);
-                if (string.Equals(ext, ".cpdz", StringComparison.OrdinalIgnoreCase))
-                {
-                    OpenPackage(path);
-                    return;
-                }
-                // Non-text package assets (images, template, manifest…) aren't editable here — reveal them instead.
+                if (string.Equals(ext, ".cpdz", StringComparison.OrdinalIgnoreCase)) { OpenPackage(path); return; }
                 if (!string.Equals(ext, ".cpd", StringComparison.OrdinalIgnoreCase) &&
                     !string.Equals(ext, ".txt", StringComparison.OrdinalIgnoreCase))
                 {
-                    try
-                    {
-                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                        { FileName = "explorer.exe", Arguments = $"/select,\"{path}\"", UseShellExecute = true });
-                    }
-                    catch { _status.Text = "Can't open " + Path.GetFileName(path); }
+                    RevealPath(path, select: true);              // images, template, manifest…
+                    return;
+                }
+                var text = (await File.ReadAllTextAsync(path)).Replace("\r\n", "\n").Replace("\r", "\n");
+                if (isPackageLib)
+                {
+                    // Keep package mode intact; open the lib as a read-only tab so edits can't vanish.
+                    AddTab(path, text);
+                    if (_active is not null) _active.ReadOnly = true;
+                    ApplyReadOnly();
+                    _status.Text = "Read-only (bundled in package): " + Path.GetFileName(path);
                     return;
                 }
                 _packagePath = null; _packageWorkDir = null;
-                OpenOrActivate(path, (await File.ReadAllTextAsync(path)).Replace("\r\n", "\n").Replace("\r", "\n"));
+                OpenOrActivate(path, text);
                 AddRecent(path);
             }
             catch (Exception ex) { _status.Text = "Open failed: " + ex.Message; }
         }
+
+        private void ApplyReadOnly() => _editor.IsReadOnly = _active?.ReadOnly == true;
 
         // Insert button: a function's call (+ #include of its file) or an #include for a file.
         private async void InsertFile_Click(object? sender, RoutedEventArgs e)
@@ -2088,7 +2256,7 @@ namespace Calcpad.Avalonia
             switch (_selectedTag)
             {
                 case FunctionRef fr: await InsertFunction(fr); break;
-                case string path: InsertAtCaret($"#include {BuildLinkedPath(await MaybeCopyIntoFolder(path))}\n"); break;
+                case string path: await InsertIncludeFor(path); break;
                 default: _status.Text = "Select a file or function first"; break;
             }
         }
