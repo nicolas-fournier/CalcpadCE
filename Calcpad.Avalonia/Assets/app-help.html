@@ -48,6 +48,23 @@
           (reversible with <kbd>Ctrl</kbd>+<kbd>Z</kbd>).</td></tr>
 </table>
 
+<h2>Input forms — editable fields (?)</h2>
+<table>
+  <tr><td class="k"><b>? Input</b> (format bar)</td>
+      <td>Insert an editable input field. Select a number to wrap it (<code>6</code> → <code>?{6}</code>),
+          sit on a <code>name = value</code> line to toggle it, or click on an empty line to drop a fresh field.
+          A <code>#input</code> directive is added automatically so the box is <b>editable</b> in the preview.</td></tr>
+  <tr><td class="k"><kbd>F5</kbd> / <b>Run</b></td>
+      <td>On an <code>#input</code> worksheet, <kbd>F5</kbd> toggles between the <b>form</b> (edit the boxes) and the
+          <b>calculated</b> result (computes through <code>#input</code> with the values you entered). Press again to edit.</td></tr>
+  <tr><td class="k"><b>↻ Inputs</b></td>
+      <td>Reads the values currently in the preview boxes and recalculates. Editing the source returns to the form.</td></tr>
+  <tr><td class="k">Switch unit</td>
+      <td>Right-click a field (or any result) ▸ <b>Switch input/result unit</b>: a searchable list of
+          dimension-compatible units. Composite units work too — type any combination
+          (<code>kN/m</code>, <code>N/mm^2</code>, <code>kg/m^3</code>) and choose <b>Apply “…”</b>.</td></tr>
+</table>
+
 <h2>Editor</h2>
 <table>
   <tr><td class="k">Autocomplete</td>
@@ -57,7 +74,9 @@
           <kbd>Tab</kbd> or <kbd>Enter</kbd>. Toggle it in View ▸ Toggle autocomplete.</td></tr>
   <tr><td class="k">Hover</td><td>Hover a unit, function, constant, or a symbol you defined to see its description / comment.</td></tr>
   <tr><td class="k"><kbd>F12</kbd></td><td>Go to the definition of the variable/function under the caret.</td></tr>
-  <tr><td class="k">Right-click</td><td>Context menu: Cut/Copy/Paste, ↔ Calc, Go to definition, Insert function, Undo/Redo.</td></tr>
+  <tr><td class="k">Right-click</td><td>Context menu: Cut/Copy/Paste, ↔ Calc, Insert input field (?), Insert table, Insert image,
+      Switch result/input unit, Go to definition, Insert function, Undo/Redo. Right-click keeps your caret and
+      selection — it no longer jumps to the click.</td></tr>
   <tr><td class="k">Syntax colours</td>
       <td><span class="var">variables</span> · <span class="unit">units</span> ·
           <span style="color:#1f7fae">functions</span> · <span class="h">keywords</span> ·
@@ -85,7 +104,9 @@
 
 <h2>Snippets &amp; formatting</h2>
 <p>The <b>Snippets</b> menu (and autocomplete) are mode-aware — markdown vs classic. Each item shows its
-trigger key. The formatting toolbar adds headings, bold/italic, lists, tables, inline/block math, and ↔ Calc.
+trigger key. The formatting toolbar adds headings, bold/italic, lists, tables, inline/block math, ↔ Calc,
+<b>? Input</b> fields, and <b>🖼 Image</b> (pick an image — saved worksheets copy it into an <code>Images/</code>
+folder and link it relatively; markdown uses <code>![…](…)</code>, classic uses <code>&lt;img&gt;</code>).
 Compute snippets: <code>plot</code>, <code>vector</code>, <code>repeat</code>, <code>def</code>, <code>convert</code>, <code>beam</code>.</p>
 
 <h2>Options bar</h2>

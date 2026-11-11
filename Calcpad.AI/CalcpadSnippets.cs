@@ -120,6 +120,18 @@ namespace Calcpad.AI
 
             new CalcpadSnippet("def", "Define a function", "$sq(x) = x^2$", SnippetMode.Markdown),
             new CalcpadSnippet("def", "Define a function", "sq(x) = x^2", SnippetMode.Classic),
+
+            // Input form: editable fields under #input. Press F5 to calculate through the form.
+            new CalcpadSnippet("input", "Input form (editable fields)",
+                "#input\n" +
+                "L := ?{6}m\n" +
+                "q := ?{10}kN/m\n" +
+                "M := q*L^2/8", SnippetMode.Markdown),
+            new CalcpadSnippet("input", "Input form (editable fields)",
+                "#input\n" +
+                "L = ?{6}m\n" +
+                "q = ?{10}kN/m\n" +
+                "M = q*L^2/8", SnippetMode.Classic),
         });
 
         /// <summary>

@@ -108,6 +108,10 @@ namespace Calcpad.Avalonia
         private object? _selectedTag; // selected file path (string) or FunctionRef
         // Values entered into #input fields in the preview, applied on the next render.
         private readonly List<(int line, string value)> _inputValues = new();
+        // Form (false) vs computed (true) view for #input worksheets: when true the render
+        // neutralizes #input/#pause so results compute with the entered values; when false the
+        // form is shown with editable boxes. Any text edit returns to the form view.
+        private bool _computeInputs;
 
         // Options-bar state (mapped onto Settings in BuildSettings).
         private bool _substitute = true;
@@ -180,6 +184,7 @@ namespace Calcpad.Avalonia
                 _dirty = true;
                 if (_active is not null) _active.Dirty = true;
                 _inputValues.Clear(); // edits invalidate the #input line mapping
+                _computeInputs = false; // back to the editable form view after any edit
                 UpdateTitle();
                 UpdateTabLabels();
                 RefreshSnippetsMenuIfModeChanged();
@@ -940,7 +945,9 @@ namespace Calcpad.Avalonia
             Item("Paste", () => _editor.Paste(), "Ctrl+V");
             menu.Items.Add(new Separator());
             Item("Toggle ↔ Calc", ToggleCalc);
+            var inputItem = Item("Insert input field (?)", InsertInputField);
             var tableItem = Item("Insert table…", OpenTableEditor);
+            Item("Insert image…", () => _ = InsertImageAsync());
             BuildUnitSwitchItem();
             menu.Items.Add(_unitSwitchItem);
             Item("Go to definition", GoToDefinition, "F12");
@@ -955,22 +962,29 @@ namespace Calcpad.Avalonia
             {
                 var lineText = CaretLineText();
                 tableItem.Header = ClassifyLineBadge(lineText) == 't' ? "Edit table…" : "Insert table…";
-                // Only offer unit switching on calculation lines (ones that produce a result).
+                var sel = _editor.SelectedText ?? string.Empty;
+                inputItem.Header =
+                    System.Text.RegularExpressions.Regex.IsMatch(lineText, @"=\s*\?\{") ? "Remove input field (?)"
+                    : System.Text.RegularExpressions.Regex.IsMatch(sel.Trim(), @"^-?\d+(?:[.,]\d+)?$")
+                      || System.Text.RegularExpressions.Regex.IsMatch(lineText, @"^\s*[A-Za-z_][\w\.]*\s*(?::=|=)\s*-?\d") ? "Make input field (?)"
+                    : "Insert input field (?)";
+                // Offer unit switching on calculation lines (results) and on input-field lines.
                 _unitSwitchItem.IsEnabled = ClassifyLineBadge(lineText) == 'f' ||
                     (lineText.Contains('=') && !lineText.TrimStart().StartsWith("#"));
+                _unitSwitchItem.Header = lineText.Contains("?{") ? "Switch input unit" : "Switch result to unit";
             };
 
             _editor.ContextMenu = menu;
 
-            // Right-click moves the caret to the click position so the menu reflects that line.
+            // A right-click must NOT move the caret or clear the selection: the context menu
+            // acts on wherever the caret already is. AvaloniaEdit moves the caret on a
+            // right-button press by default, so swallow that press in the tunnel phase (the
+            // ContextRequested event that opens the menu is separate and still fires).
             _editor.TextArea.AddHandler(global::Avalonia.Input.InputElement.PointerPressedEvent,
                 (object? _, global::Avalonia.Input.PointerPressedEventArgs e) =>
                 {
                     if (e.GetCurrentPoint(_editor.TextArea).Properties.IsRightButtonPressed)
-                    {
-                        var pos = _editor.GetPositionFromPoint(e.GetPosition(_editor.TextArea.TextView));
-                        if (pos.HasValue) { _editor.CaretOffset = _editor.Document.GetOffset(pos.Value.Location); _editor.SelectionLength = 0; }
-                    }
+                        e.Handled = true;
                 },
                 global::Avalonia.Interactivity.RoutingStrategies.Tunnel);
         }
@@ -1011,6 +1025,17 @@ namespace Calcpad.Avalonia
             var hasFilter = filter.Length > 0;
             var any = false;
 
+            // Escape hatch for any composite unit: apply exactly what was typed (e.g. "kN/m",
+            // "N/mm^2", "kg/m^3"), even when it isn't one of the catalog presets.
+            if (hasFilter)
+            {
+                var typed = filter;
+                var applyTyped = new MenuItem { Header = $"Apply  “{typed}”", FontWeight = FontWeight.SemiBold };
+                applyTyped.Click += (_, _) => ApplyUnitToCaretLine(typed);
+                _unitSwitchItem.Items.Add(applyTyped);
+                _unitSwitchItem.Items.Add(new Separator());
+            }
+
             foreach (var (cat, units) in UnitSwitchCatalog)
             {
                 IEnumerable<string> matches;
@@ -1035,7 +1060,7 @@ namespace Calcpad.Avalonia
                 {
                     var unit = u;
                     var mi = new MenuItem { Header = "    " + unit };
-                    mi.Click += (_, _) => ApplyResultUnit(unit);
+                    mi.Click += (_, _) => ApplyUnitToCaretLine(unit);
                     _unitSwitchItem.Items.Add(mi);
                     any = true;
                 }
@@ -1044,38 +1069,70 @@ namespace Calcpad.Avalonia
                 _unitSwitchItem.Items.Add(new MenuItem { Header = "(no match)", IsEnabled = false });
         }
 
-        // Finds the catalog category whose unit appears on the line (whole-token match), so the
-        // menu can default to dimensionally-compatible units.
+        // Finds the catalog category whose unit appears on the line, so the menu can default to
+        // dimensionally-compatible units. Composite units (kN/m, m^2, kN*m) are matched FIRST so
+        // a line load "kN/m" is recognised as such instead of its bare "m" matching "Length".
         private static string? DetectCompatibleCategory(string line)
         {
-            foreach (var (cat, units) in UnitSwitchCatalog)
-                foreach (var u in units.OrderByDescending(x => x.Length))
-                {
-                    // simple units only (skip composite m^2 / kN*m for detection)
-                    if (u.IndexOfAny(new[] { '^', '*', '/' }) >= 0) continue;
-                    var pattern = $"(?<![A-Za-z]){System.Text.RegularExpressions.Regex.Escape(u)}(?![A-Za-z])";
-                    if (System.Text.RegularExpressions.Regex.IsMatch(line, pattern))
-                        return cat;
-                }
+            // Match against the unit part only: after the last '=' and before any comment.
+            var eq = line.LastIndexOf('=');
+            var span = eq >= 0 ? line[(eq + 1)..] : line;
+            var q = span.IndexOfAny(new[] { '\'', '"' });
+            if (q >= 0) span = span[..q];
+
+            var all = UnitSwitchCatalog
+                .SelectMany(c => c.units.Select(u => (c.cat, u)))
+                .OrderByDescending(x => x.u.IndexOfAny(new[] { '^', '*', '/' }) >= 0 ? 1 : 0) // composites first
+                .ThenByDescending(x => x.u.Length);
+            foreach (var (cat, u) in all)
+                if (ContainsUnitToken(span, u))
+                    return cat;
             return null;
         }
 
-        // Sets (or replaces) the display unit of the caret line via Calcpad's "| unit" target operator.
-        private void ApplyResultUnit(string unit)
+        // True if `unit` appears in `text` as a whole unit token (not a fragment of a longer
+        // identifier). For a composite like "kN/m" the whole expression must appear verbatim.
+        private static bool ContainsUnitToken(string text, string unit)
         {
+            var pattern = $"(?<![A-Za-z0-9]){System.Text.RegularExpressions.Regex.Escape(unit)}(?![A-Za-z0-9])";
+            return System.Text.RegularExpressions.Regex.IsMatch(text, pattern);
+        }
+
+        // Applies a unit to the caret line. An input-field line (…?{…}…) has its own unit token
+        // rewritten; any other calculation line gets a "| unit" display target. The chosen unit
+        // may be a composite (kN/m, N/mm^2) — it is applied verbatim and parsed by the engine.
+        private void ApplyUnitToCaretLine(string unit)
+        {
+            unit = unit.Trim();
+            if (unit.Length == 0) return;
             var line = _editor.Document.GetLineByOffset(_editor.CaretOffset);
             var text = _editor.Document.GetText(line.Offset, line.Length);
-            string baseText;
-            var bar = text.LastIndexOf('|');
-            // A trailing "| unit" is a display target; a '|' inside a matrix ends before ']'.
-            if (bar >= 0 && !text[bar..].Contains(']'))
-                baseText = text[..bar].TrimEnd();
+
+            string newText;
+            string label;
+            var brace = text.LastIndexOf('}');
+            if (text.Contains("?{") && brace >= 0)
+            {
+                // Input field: replace the unit token that follows the closing brace, keeping any
+                // trailing comment. "span = ?{6}m" → "span = ?{6}mm".
+                var after = text[(brace + 1)..];
+                var cut = after.IndexOfAny(new[] { '\'', '"' });
+                var comment = cut >= 0 ? " " + after[cut..].TrimStart() : string.Empty;
+                newText = text[..(brace + 1)] + unit + comment;
+                label = "Input unit → " + unit;
+            }
             else
-                baseText = text.TrimEnd();
-            var newText = baseText + " | " + unit;
+            {
+                // Result line: set/replace the "| unit" display target.
+                var bar = text.LastIndexOf('|');
+                var baseText = (bar >= 0 && !text[bar..].Contains(']')) ? text[..bar].TrimEnd() : text.TrimEnd();
+                newText = baseText + " | " + unit;
+                label = "Result unit → " + unit;
+            }
+
             _editor.Document.Replace(line.Offset, line.Length, newText);
             _editor.CaretOffset = line.Offset + newText.Length;
-            _status.Text = "Result unit → " + unit;
+            _status.Text = label;
         }
 
         // ---- Hover tooltips (units / functions / constants) ----
@@ -1223,6 +1280,87 @@ namespace Calcpad.Avalonia
             ScheduleRender();
         }
 
+        // ---- Image insertion (markdown-aware) ----
+
+        private static readonly string[] ImageExtensions =
+            { ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg" };
+
+        // Lets the user pick an image and inserts a reference at the caret. When the worksheet
+        // is saved, the picture is copied into an "Images/" folder beside it and referenced with
+        // a relative path (so it survives in HTML/DOCX export and in a .cpdz package); for an
+        // unsaved worksheet it falls back to an absolute file:// URI so the preview still shows it.
+        private async System.Threading.Tasks.Task InsertImageAsync()
+        {
+            try
+            {
+                var picked = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+                {
+                    Title = "Insert image",
+                    AllowMultiple = false,
+                    FileTypeFilter = new[]
+                    {
+                        new FilePickerFileType("Images")
+                            { Patterns = new[] { "*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp", "*.bmp", "*.svg" } },
+                        FilePickerFileTypes.All
+                    }
+                });
+                var file = picked?.FirstOrDefault();
+                if (file is null) return;
+
+                var srcPath = file.Path.LocalPath;
+                var alt = Path.GetFileNameWithoutExtension(srcPath);
+                string url;
+
+                var dir = _currentFile is null ? null : Path.GetDirectoryName(_currentFile);
+                if (!string.IsNullOrEmpty(dir))
+                {
+                    // Copy into <worksheet>/Images with a non-clobbering name, reference relatively.
+                    var imagesDir = Path.Combine(dir, "Images");
+                    Directory.CreateDirectory(imagesDir);
+                    var name = Path.GetFileName(srcPath);
+                    var dest = Path.Combine(imagesDir, name);
+                    if (!PathsEqual(srcPath, dest))
+                    {
+                        if (File.Exists(dest) && !FilesIdentical(srcPath, dest))
+                        {
+                            var stem = Path.GetFileNameWithoutExtension(name);
+                            var ext = Path.GetExtension(name);
+                            for (var i = 2; File.Exists(dest); ++i)
+                                dest = Path.Combine(imagesDir, $"{stem}-{i}{ext}");
+                        }
+                        if (!File.Exists(dest)) File.Copy(srcPath, dest);
+                    }
+                    url = "Images/" + Path.GetFileName(dest).Replace(" ", "%20");
+                }
+                else
+                {
+                    // Unsaved worksheet: no base href, so use an absolute file:// URI.
+                    url = new Uri(srcPath).AbsoluteUri;
+                    _status.Text = "Image linked by absolute path — save the worksheet to copy it into Images/";
+                }
+
+                InsertAtCaret(CurrentMarkdownFull()
+                    ? $"![{alt}]({url})\n"
+                    : $"<img src=\"{url}\" alt=\"{alt}\" />\n");
+            }
+            catch (Exception ex) { _status.Text = "Insert image failed: " + ex.Message; }
+        }
+
+        private static bool PathsEqual(string a, string b) =>
+            string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
+
+        private static bool FilesIdentical(string a, string b)
+        {
+            try
+            {
+                var fa = new FileInfo(a);
+                var fb = new FileInfo(b);
+                if (fa.Length != fb.Length) return false;
+                return File.ReadAllBytes(a).AsSpan().SequenceEqual(File.ReadAllBytes(b));
+            }
+            catch { return false; }
+        }
+
         // ---- Keypad ----
 
         // Richer, grouped catalog used by the editor's "Switch result to unit" menu.
@@ -1234,6 +1372,7 @@ namespace Calcpad.Avalonia
             ("Volume",      new[] { "m^3", "cm^3", "mm^3", "L", "mL", "in^3", "ft^3" }),
             ("Mass",        new[] { "kg", "g", "mg", "t", "lb", "oz" }),
             ("Force",       new[] { "N", "kN", "MN", "lbf", "kip" }),
+            ("Line load",   new[] { "N/m", "kN/m", "N/mm", "kN/cm", "kip/ft", "lbf/in" }),
             ("Moment",      new[] { "N*m", "kN*m", "N*mm", "lbf*ft" }),
             ("Pressure",    new[] { "Pa", "kPa", "MPa", "GPa", "bar", "psi", "ksi" }),
             ("Temperature", new[] { "°C", "K", "°F", "°R", "Δ°C" }),
@@ -2437,7 +2576,7 @@ namespace Calcpad.Avalonia
         // (which crashes the layout pass when typing in the code). A real click still opens it next frame.
         private void OnCaretTableFollow()
         {
-            if (_tableSyncing || _tableInsertMode || _switching || _tableFollowQueued) return;
+            if (_tableSyncing || _tableInsertMode || _switching || _tableFollowQueued || _inputPanelActive) return;
             _tableFollowQueued = true;
             global::Avalonia.Threading.Dispatcher.UIThread.Post(() =>
             {
@@ -2525,10 +2664,105 @@ namespace Calcpad.Avalonia
 
         private void CloseTableEditor()
         {
-            _tableActive = false; _tableInsertMode = false;
+            _tableActive = false; _tableInsertMode = false; _inputPanelActive = false;
             _tableStartLine = _tableEndLine = -1;
             _tableOverlay.IsVisible = false;
         }
+
+        // ---- Inline input-field panel (quick name / value / unit entry, like the table editor) ----
+
+        private bool _inputPanelActive;
+
+        // Opens a small docked panel below the code to enter an input field fast: name, default
+        // value and (compatible) unit — composites like kN/m accepted — then Insert at the caret.
+        private void OpenInputPanel()
+        {
+            if (_inputPanelActive) { CloseTableEditor(); return; } // toggle off
+            // Make sure the table editor isn't bound underneath us.
+            _tableActive = false; _tableInsertMode = false;
+            _inputPanelActive = true;
+
+            var md = CurrentMarkdownFull();
+            var nameBox = new TextBox { Text = "x", Width = 90, Watermark = "name" };
+            var valueBox = new TextBox { Text = "0", Width = 70, Watermark = "value" };
+            var unitBox = new AutoCompleteBox
+            {
+                Width = 150,
+                Watermark = "unit (e.g. kN/m)",
+                FilterMode = AutoCompleteFilterMode.Contains,
+                ItemsSource = AllCatalogUnits(),
+                MinimumPrefixLength = 0
+            };
+            var commentBox = new TextBox { Width = 150, Watermark = "comment (optional)" };
+
+            void DoInsert()
+            {
+                var name = string.IsNullOrWhiteSpace(nameBox.Text) ? "x" : nameBox.Text.Trim();
+                var val = (valueBox.Text ?? "0").Trim().Replace(',', '.');
+                if (val.Length == 0) val = "0";
+                var unit = (unitBox.Text ?? string.Empty).Trim();
+                var comment = (commentBox.Text ?? string.Empty).Trim();
+                var assign = md ? " := " : " = ";
+                var field = $"{name}{assign}?{{{val}}}{unit}";
+                if (comment.Length > 0) field += "  '" + comment;
+
+                var line = _editor.Document.GetLineByOffset(_editor.CaretOffset);
+                EnsureInputDirectiveAbove(line);
+                line = _editor.Document.GetLineByOffset(_editor.CaretOffset);
+                var lineText = _editor.Document.GetText(line.Offset, line.Length);
+                var off = _editor.CaretOffset;
+                var prefix = lineText.Trim().Length > 0 ? "\n" : "";
+                _editor.Document.Insert(off, prefix + field);
+                CloseTableEditor();
+                _computeInputs = false;
+                _editor.Focus();
+                _status.Text = "Input field inserted — press Run (F5) to calculate the form";
+                ScheduleRender();
+            }
+
+            Button Tool(string label, Action act)
+            { var b = new Button { Content = label, Margin = new global::Avalonia.Thickness(1), Padding = new global::Avalonia.Thickness(6, 1) }; b.Click += (_, _) => act(); return b; }
+
+            void OnKey(object? _, global::Avalonia.Input.KeyEventArgs e)
+            {
+                if (e.Key == global::Avalonia.Input.Key.Enter) { DoInsert(); e.Handled = true; }
+                else if (e.Key == global::Avalonia.Input.Key.Escape) { CloseTableEditor(); _editor.Focus(); e.Handled = true; }
+            }
+            nameBox.KeyDown += OnKey; valueBox.KeyDown += OnKey; commentBox.KeyDown += OnKey;
+
+            TextBlock Lbl(string t) => new() { Text = t, VerticalAlignment = VerticalAlignment.Center, Margin = new global::Avalonia.Thickness(8, 0, 4, 0) };
+
+            var row1 = new WrapPanel { Orientation = Orientation.Horizontal };
+            row1.Children.Add(new TextBlock { Text = "Input", FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center, Margin = new global::Avalonia.Thickness(0, 0, 4, 0) });
+            row1.Children.Add(nameBox);
+            row1.Children.Add(Lbl(md ? ":=" : "="));
+            row1.Children.Add(valueBox);
+            row1.Children.Add(Lbl("unit"));
+            row1.Children.Add(unitBox);
+            row1.Children.Add(Lbl("note"));
+            row1.Children.Add(commentBox);
+
+            var row2 = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new global::Avalonia.Thickness(0, 2, 0, 0) };
+            row2.Children.Add(Tool("Insert at caret", DoInsert));
+            row2.Children.Add(Tool("Close", () => { CloseTableEditor(); _editor.Focus(); }));
+            row2.Children.Add(new TextBlock
+            {
+                Text = "Adds #input so the box is editable. Enter = insert · Esc = close. Unit accepts composites (kN/m, N/mm^2).",
+                FontSize = 11, VerticalAlignment = VerticalAlignment.Center,
+                Margin = new global::Avalonia.Thickness(8, 0, 0, 0), Foreground = new SolidColorBrush(Color.Parse("#6B7280"))
+            });
+
+            var panel = new StackPanel { Orientation = Orientation.Vertical, Spacing = 3 };
+            panel.Children.Add(row1);
+            panel.Children.Add(row2);
+            _tableOverlay.Child = panel;
+            _tableOverlay.IsVisible = true;
+            Dispatcher.UIThread.Post(() => nameBox.Focus(), DispatcherPriority.Input);
+        }
+
+        // Flat list of catalog units (simple + composite) for the input panel's unit suggestions.
+        private static string[] AllCatalogUnits() =>
+            UnitSwitchCatalog.SelectMany(c => c.units).Distinct().ToArray();
 
         private void BuildTablePanel(bool bound)
         {
@@ -2951,6 +3185,14 @@ namespace Calcpad.Avalonia
             ToolTip.SetTip(table, "Inline grid: paste from Excel or type data, insert/replace as a Calcpad matrix or a markdown table");
             bar.Children.Add(table);
 
+            var input = MakeButton("? Input", OpenInputPanel);
+            ToolTip.SetTip(input, "Open the input panel: enter name / value / unit (composites like kN/m ok) and insert an editable field. Adds #input so the box is editable; press Run (F5) to calculate. (Right-click in the code for the quick wrap/toggle.)");
+            bar.Children.Add(input);
+
+            var image = MakeButton("🖼 Image", () => _ = InsertImageAsync());
+            ToolTip.SetTip(image, "Pick an image and insert it. Saved worksheets copy it into an Images/ folder and link it relatively; markdown uses ![…](…), classic uses <img>.");
+            bar.Children.Add(image);
+
             _formatBar.Child = bar;
         }
 
@@ -3008,6 +3250,92 @@ namespace Calcpad.Avalonia
             ScheduleRender();
         }
 
+        // ---- Quick input field (?) ----
+
+        // Inserts/toggles a Calcpad input field (?{default}unit) and guarantees an #input
+        // directive governs it, so the preview shows an editable box. Mode-aware: markdown
+        // assigns with ':=', classic with '='. Behaviour, in order:
+        //   • a number is selected        → wrap it:  6 → ?{6}
+        //   • caret on "name =/:= value"  → toggle the right-hand number to/from ?{…}
+        //   • otherwise                    → insert a fresh "name = ?{0}" field, name selected
+        private void InsertInputField()
+        {
+            try
+            {
+                var md = CurrentMarkdownFull();
+                var assign = md ? " := " : " = ";
+                var line = _editor.Document.GetLineByOffset(_editor.CaretOffset);
+                var lineText = _editor.Document.GetText(line.Offset, line.Length);
+                var sel = _editor.SelectedText ?? string.Empty;
+
+                // 1) Wrap a selected number.
+                if (sel.Trim().Length > 0 &&
+                    System.Text.RegularExpressions.Regex.IsMatch(sel.Trim(), @"^-?\d+(?:[.,]\d+)?$"))
+                {
+                    var def = sel.Trim().Replace(',', '.');
+                    _editor.Document.Replace(_editor.SelectionStart, _editor.SelectionLength, $"?{{{def}}}");
+                    EnsureInputDirectiveAbove(line);
+                    AfterInputInsert("Input field added — press Run (F5) to calculate the form");
+                    return;
+                }
+
+                // 2) Toggle the right-hand number of an assignment line.
+                var m = System.Text.RegularExpressions.Regex.Match(lineText,
+                    @"^(\s*[A-Za-z_][\w\.]*\s*(?::=|=)\s*)(?:\?\{\s*(-?\d+(?:\.\d+)?)\s*\}|(-?\d+(?:\.\d+)?))(.*)$");
+                if (m.Success)
+                {
+                    var revert = m.Groups[2].Success;                   // currently ?{num}
+                    var num = revert ? m.Groups[2].Value : m.Groups[3].Value;
+                    var newRhs = revert ? num : $"?{{{num}}}";
+                    _editor.Document.Replace(line.Offset, line.Length,
+                        m.Groups[1].Value + newRhs + m.Groups[4].Value);
+                    if (!revert) EnsureInputDirectiveAbove(line);
+                    AfterInputInsert(revert
+                        ? "Input field removed"
+                        : "Input field added — press Run (F5) to calculate the form");
+                    return;
+                }
+
+                // 3) Insert a fresh field; select the placeholder name for immediate typing.
+                EnsureInputDirectiveAbove(line);
+                line = _editor.Document.GetLineByOffset(_editor.CaretOffset); // offsets may have shifted
+                lineText = _editor.Document.GetText(line.Offset, line.Length);
+                var off = _editor.CaretOffset;
+                var prefix = lineText.Trim().Length > 0 ? "\n" : "";
+                var text = prefix + $"x{assign}?{{0}}";
+                _editor.Document.Insert(off, text);
+                var nameOff = off + prefix.Length;
+                _editor.CaretOffset = nameOff + 1;
+                _editor.SelectionStart = nameOff;
+                _editor.SelectionLength = 1;                            // "x" selected → type the name
+                AfterInputInsert("Name the input, then press Run (F5) to calculate the form");
+            }
+            catch (Exception ex) { _status.Text = "Insert input failed: " + ex.Message; }
+        }
+
+        // Ensures a bare #input directive appears above the given line (inserting one at the
+        // line's start if absent), so the field renders as an editable box in the preview.
+        private void EnsureInputDirectiveAbove(AvaloniaEdit.Document.DocumentLine line)
+        {
+            var upto = _editor.Document.GetText(0, line.Offset);
+            foreach (var raw in upto.Split('\n'))
+            {
+                var t = raw.TrimStart();
+                if (t.StartsWith("#input", StringComparison.OrdinalIgnoreCase) &&
+                    (t.Length == 6 || t[6] is ' ' or '\t' or '\'' or '"'))
+                    return;
+            }
+            _editor.Document.Insert(line.Offset, "#input\n");
+        }
+
+        private void AfterInputInsert(string status)
+        {
+            _computeInputs = false;   // show the editable form for the new field
+            _editor.Focus();
+            _status.Text = status;
+            ScheduleRender();
+        }
+
         // ---- Snippets (mode-aware) ----
 
         private void PopulateSnippetsMenu()
@@ -3055,7 +3383,27 @@ namespace Calcpad.Avalonia
 
         // ---- Rendering ----
 
-        private void Run_Click(object? sender, RoutedEventArgs e) => Render();
+        private void Run_Click(object? sender, RoutedEventArgs e)
+        {
+            // For an #input worksheet, F5 toggles between the editable form and the computed
+            // result: form → read the boxes and calculate; computed → back to the form.
+            if (DocHasInputForm())
+            {
+                if (_computeInputs)
+                {
+                    _computeInputs = false;
+                    _inputValues.Clear();
+                    Render();
+                    _status.Text = "Input form — edit the boxes, then press Run (F5) to calculate";
+                }
+                else
+                {
+                    RecalcInputs_Click(sender, e); // read the entered values and compute
+                }
+                return;
+            }
+            Render();
+        }
 
         // Loads the quick-reference (Calcpad language) help page into the preview pane.
         private void ShowHelp_Click(object? sender, RoutedEventArgs e) => ShowHelpPage("help.html", "Quick reference");
@@ -3113,12 +3461,85 @@ namespace Calcpad.Avalonia
             macro.Parse(source, out var unwrapped, null, 0, false);
 
             var code = unwrapped ?? source;
+            // Calculator habit: a line like "x*2=" means "evaluate x*2". Calcpad appends the
+            // "= result" itself (bare "x*2" in classic, "$x*2$" in markdown) and a trailing '='
+            // is otherwise an error, so rewrite such lines to the correct evaluating form.
+            code = EvaluateTrailingEquals(code, CurrentMarkdownFull());
             if (_inputValues.Count > 0)
                 code = ApplyInputValues(code, _inputValues);
+            // Computed view: neutralize #input/#pause so results calculate with the entered
+            // values instead of the engine pausing the form (the F5 "continue" resume, ported).
+            if (_computeInputs)
+                code = NeutralizeInputDirectives(code);
 
             var parser = new ExpressionParser { Settings = BuildSettings() };
             parser.Parse(code, true, false);
             return parser.HtmlResult ?? string.Empty;
+        }
+
+        // Rewrites a "result request" line ending in a lone '=' (e.g. "x*2=", "q*L^2/8 =") into the
+        // form Calcpad evaluates: "$expr$" in markdown, bare "expr" in classic. Lines whose left
+        // side is a valid assignment target (name or f(x)) are left alone — those are assignments
+        // the user is still typing, not evaluations. Line count is preserved (input-N mapping safe).
+        private static string EvaluateTrailingEquals(string code, bool md)
+        {
+            if (!code.Contains('=')) return code;
+            var lines = code.Replace("\r\n", "\n").Split('\n');
+            var changed = false;
+            for (var i = 0; i < lines.Length; ++i)
+            {
+                var raw = lines[i];
+                var t = raw.TrimEnd();
+                if (t.Length < 2 || t[^1] != '=') continue;
+                if (t.EndsWith(":=") || t.EndsWith("==") || t.EndsWith("<=") ||
+                    t.EndsWith(">=") || t.EndsWith("!=") || t.EndsWith("≠") ||
+                    t.EndsWith("≤") || t.EndsWith("≥")) continue;
+                var expr = t[..^1].TrimEnd();
+                var ts = expr.TrimStart();
+                if (ts.Length == 0 || ts[0] is '#' or '\'' or '"' or '$' or '|') continue;
+                // A plain assignment target (name / f(args)) is an incomplete assignment, not an
+                // evaluation request — leave it untouched.
+                if (System.Text.RegularExpressions.Regex.IsMatch(expr, @"^\s*[A-Za-z_]\w*(?:\s*\([^)]*\))?\s*$"))
+                    continue;
+                var lead = raw[..(raw.Length - raw.TrimStart().Length)];
+                lines[i] = md ? $"{lead}${ts}$" : $"{lead}{ts}";
+                changed = true;
+            }
+            return changed ? string.Join('\n', lines) : code;
+        }
+
+        // Blanks bare #input / #pause directive lines (keeping line numbers, so the input-N
+        // mapping stays valid) so the worksheet computes through what would otherwise pause.
+        private static string NeutralizeInputDirectives(string code)
+        {
+            if (code.IndexOf("#input", StringComparison.OrdinalIgnoreCase) < 0 &&
+                code.IndexOf("#pause", StringComparison.OrdinalIgnoreCase) < 0)
+                return code;
+            var lines = code.Replace("\r\n", "\n").Split('\n');
+            for (var i = 0; i < lines.Length; ++i)
+            {
+                var t = lines[i].TrimStart();
+                if ((t.StartsWith("#input", StringComparison.OrdinalIgnoreCase) ||
+                     t.StartsWith("#pause", StringComparison.OrdinalIgnoreCase)) &&
+                    (t.Length == 6 || t[6] is ' ' or '\t' or '\'' or '"'))
+                    lines[i] = "";
+            }
+            return string.Join('\n', lines);
+        }
+
+        // True when the worksheet declares an #input form (a bare #input directive line).
+        private bool DocHasInputForm()
+        {
+            var text = _editor?.Text;
+            if (string.IsNullOrEmpty(text)) return false;
+            foreach (var raw in text.Split('\n'))
+            {
+                var t = raw.TrimStart();
+                if (t.StartsWith("#input", StringComparison.OrdinalIgnoreCase) &&
+                    (t.Length == 6 || t[6] is ' ' or '\t' or '\'' or '"'))
+                    return true;
+            }
+            return false;
         }
 
         // Injects interactive #input values back into the source by line (ported from the CLI
@@ -3168,9 +3589,11 @@ namespace Calcpad.Avalonia
                         _inputValues.Add((el.GetProperty("line").GetInt32(),
                                           el.GetProperty("value").GetString() ?? string.Empty));
                 }
-                if (_inputValues.Count == 0) { _status.Text = "No #input fields in the preview"; return; }
+                _computeInputs = true; // switch to the computed view (neutralizes #input)
                 Render();
-                _status.Text = $"Recalculated with {_inputValues.Count} input value(s)";
+                _status.Text = _inputValues.Count > 0
+                    ? $"Calculated with {_inputValues.Count} input value(s) — edit the code to return to the form"
+                    : "Calculated — edit the code to return to the input form";
             }
             catch (Exception ex) { _status.Text = "Inputs failed: " + ex.Message; }
         }
