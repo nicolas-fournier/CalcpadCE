@@ -29,8 +29,10 @@
 <div class="note">
   New documents start in <b>markdown-first</b> mode (<code>#md full</code>): <b>prose is the default</b>,
   and a line is a <b>calculation</b> only when it is an assignment (<code>:=</code>) or delimited math
-  (<code>$…$</code>, <code>$$…$$</code>). The gutter shows <span class="f">ƒ</span> on calc lines,
-  <span class="h">#</span> on headings, and nothing on prose.
+  (<code>$…$</code>, <code>$$…$$</code>). The left gutter marks each line —
+  <b style="color:#16A34A">ƒ</b> calc · <b style="color:#2563EB">=</b> result ·
+  <b style="color:#EA580C">?</b> input · <b style="color:#1F7FAE">⊞</b> table ·
+  <b style="color:#0891B2">▣</b> image · <b style="color:#B2379B">#</b> heading (see <i>Gutter badges</i> below).
 </div>
 
 <h2>Calculation vs prose — one gesture</h2>
@@ -98,7 +100,7 @@
 <table>
   <tr><td class="k"><kbd>Ctrl</kbd>+<kbd>N</kbd> / <kbd>O</kbd> / <kbd>S</kbd> / <kbd>Shift</kbd>+<kbd>S</kbd></td>
       <td>New · Open · Save · Save As. Open files appear as <b>tabs</b>.</td></tr>
-  <tr><td class="k"><kbd>F5</kbd></td><td>Recalculate &amp; show the preview.</td></tr>
+  <tr><td class="k"><kbd>F5</kbd></td><td>Recalculate &amp; show the preview. On an <code>#input</code> worksheet it toggles the editable <b>form</b> ⇄ the <b>calculated</b> result.</td></tr>
   <tr><td class="k">File ▸ Export</td><td>HTML, Word (.docx), or Print/PDF (via the browser).</td></tr>
 </table>
 
@@ -110,7 +112,8 @@
       A right-hand column lists <span class="var">this worksheet's variables</span> and a <span class="unit">units palette</span>
       (length, mass, force, pressure, temperature °C/K/°F/°R, angle, time, electrical) — click to insert.</td></tr>
   <tr><td class="k"><b>AI</b></td><td>Streaming assistant with agent mode, image/PDF attachments and persistent memory.
-      Set <code>ANTHROPIC_API_KEY</code> or paste a key.</td></tr>
+      It knows the markdown-first syntax — ask it for a calculation or a reusable <b>input form</b>
+      (<code>#input</code> + <code>?{…}</code> fields) and paste the result. Set <code>ANTHROPIC_API_KEY</code> or paste a key.</td></tr>
 </table>
 
 <h2>Snippets &amp; formatting</h2>

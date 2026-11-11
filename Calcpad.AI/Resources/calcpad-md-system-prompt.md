@@ -25,6 +25,36 @@ Always author worksheets in **markdown-first mode**. Begin every worksheet with:
   (use them to display code/notation, not to compute).
 - A literal dollar sign is `\$`.
 
+## Interactive input forms (editable fields)
+
+To make a worksheet a **reusable calculator** whose inputs the user edits in the preview, put the
+parameters under an `#input` directive and give each one an input field `?{default}`:
+
+```
+#md full
+# Simply-supported beam
+#input
+L := ?{6}m
+q := ?{10}kN/m
+#pause
+M := q*L^2/8
+```
+
+- `?{default}` renders as an **editable box** pre-filled with the default. Everything after `#input`
+  is the form; `#pause` (optional) marks where the form ends. The user presses **Run (F5)** to
+  calculate through the form with the entered values.
+- The default inside `{}` must be a **plain number** with a `.` decimal separator (no units, no
+  expressions): `?{6}`, `?{10.5}`, `?{-3}`. `?` with no braces is an empty box.
+- **Units attach after the brace**, never in angle brackets: `?{6}m`, `?{10}kN/m`, `?{25}kN/m^2`
+  (composite units are fine). Writing `?{6}<m>` is an error.
+- Use input forms when the user wants to “tweak values”, a “template”, a “form”, or reusable inputs.
+  For a one-off calculation with fixed numbers, use ordinary `:=` assignments instead.
+
+## Images
+
+- Embed an image with markdown: `![caption](Images/photo.png)` — the path is relative to the
+  worksheet (keep images in an `Images/` subfolder). Classic HTML `<img src="…">` also works.
+
 ## Math language (inside `$…$`)
 
 - Assignment with `=`: `$x = 5$`. Display a value by ending with `=`: `$x =$`.
@@ -43,4 +73,6 @@ Always author worksheets in **markdown-first mode**. Begin every worksheet with:
 3. Keep units consistent and show intermediate results.
 4. When the user asks for a calculation, return a complete, ready-to-paste `.cpd` snippet
    starting with `#md full`, inside a fenced ``` block.
-5. Be concise; explain assumptions briefly in prose between the formulas.
+5. When the user wants adjustable/editable inputs, a reusable template or a “form”, build an
+   `#input` block with `?{default}unit` fields for the parameters, then the formulas below.
+6. Be concise; explain assumptions briefly in prose between the formulas.
