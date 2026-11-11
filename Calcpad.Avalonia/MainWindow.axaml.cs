@@ -969,7 +969,7 @@ namespace Calcpad.Avalonia
                       || System.Text.RegularExpressions.Regex.IsMatch(lineText, @"^\s*[A-Za-z_][\w\.]*\s*(?::=|=)\s*-?\d") ? "Make input field (?)"
                     : "Insert input field (?)";
                 // Offer unit switching on calculation lines (results) and on input-field lines.
-                _unitSwitchItem.IsEnabled = ClassifyLineBadge(lineText) == 'f' ||
+                _unitSwitchItem.IsEnabled = ClassifyLineBadge(lineText) is 'f' or 'r' or 'i' ||
                     (lineText.Contains('=') && !lineText.TrimStart().StartsWith("#"));
                 _unitSwitchItem.Header = lineText.Contains("?{") ? "Switch input unit" : "Switch result to unit";
             };
@@ -1204,13 +1204,19 @@ namespace Calcpad.Avalonia
         private static bool IsWordChar(char c)
             => char.IsLetterOrDigit(c) || c == '_' || "µΩ°²³".IndexOf(c) >= 0;
 
-        // Clicking a gutter badge opens the table editor on a table line, else toggles calc/prose.
+        // Clicking a gutter badge: table → table editor, input → the input panel (bound to the
+        // field), image → just place the caret, else toggle calc/prose.
         private void ToggleLineByOffset(int offset)
         {
             _editor.CaretOffset = Math.Clamp(offset, 0, _editor.Document.TextLength);
             _editor.SelectionLength = 0;
-            if (ClassifyLineBadge(CaretLineText()) == 't') { OpenTableEditor(); return; }
-            ToggleCalc();
+            switch (ClassifyLineBadge(CaretLineText()))
+            {
+                case 't': OpenTableEditor(); return;
+                case 'i': OpenInputPanel(); return;
+                case 'g': return;
+                default: ToggleCalc(); return;
+            }
         }
 
         private string CaretLineText()
@@ -1225,22 +1231,40 @@ namespace Calcpad.Avalonia
         private static bool IsTableLine(string trimmed) =>
             trimmed.StartsWith("|") || MatrixLineRegex.IsMatch(trimmed);
 
-        // Gutter badge: 't' = table, 'f' = calculation, '#' = heading, ' ' = prose/directive.
+        // Gutter badge: 't' table · 'i' input field · 'g' image · 'r' result (=) · 'f' calculation
+        // (assignment) · '#' heading · ' ' prose/directive.
         private char ClassifyLineBadge(string lineText)
         {
             var t = lineText.TrimStart();
             if (t.Length == 0) return ' ';
             if (IsTableLine(t)) return 't';                      // matrix [..|..] or markdown | .. |
+            if (t.StartsWith("![") || t.StartsWith("<img", StringComparison.OrdinalIgnoreCase)) return 'g';
             if (CurrentMarkdownFull())
             {
                 if (System.Text.RegularExpressions.Regex.IsMatch(t, @"^#{1,6}\s")) return '#';
                 if (t[0] == '#') return ' ';                     // directive (#md, #if, …)
-                if (t.Contains(":=") || t.Contains('$')) return 'f';
-                return ' ';                                      // prose
+                var hasMath = t.Contains(":=") || t.Contains('$');
+                if (!hasMath) return IsEvalRequest(t) ? 'r' : ' ';
+                if (t.Contains("?{")) return 'i';                // editable input field
+                return t.Contains(":=") ? 'f' : 'r';             // assignment vs pure $…$ result
             }
             if (t[0] == '\'' || t[0] == '"') return ' ';         // classic comment/title = text
             if (t[0] == '#') return ' ';
-            return 'f';                                          // classic default = calculation
+            if (t.Contains("?{")) return 'i';
+            // name = value → assignment (ƒ); a bare expression or "expr=" → result (=).
+            if (System.Text.RegularExpressions.Regex.IsMatch(t, @"^[A-Za-z_][\w\.]*\s*=\s*\S") && !t.TrimEnd().EndsWith("="))
+                return 'f';
+            return 'r';
+        }
+
+        // A line ending in a lone '=' is a calculator-style "evaluate this" request (see
+        // EvaluateTrailingEquals), e.g. "x*2=".
+        private static bool IsEvalRequest(string t)
+        {
+            var e = t.TrimEnd();
+            return e.Length >= 2 && e[^1] == '=' &&
+                   !e.EndsWith(":=") && !e.EndsWith("==") &&
+                   !e.EndsWith(">=") && !e.EndsWith("<=") && !e.EndsWith("!=");
         }
 
 
@@ -2683,17 +2707,28 @@ namespace Calcpad.Avalonia
             _inputPanelActive = true;
 
             var md = CurrentMarkdownFull();
-            var nameBox = new TextBox { Text = "x", Width = 90, Watermark = "name" };
-            var valueBox = new TextBox { Text = "0", Width = 70, Watermark = "value" };
+
+            // If the caret sits on an existing input field, bind to it: pre-fill the fields and
+            // replace that line on insert (edit in place), like the table editor binds to a table.
+            var caretLine = _editor.Document.GetLineByOffset(_editor.CaretOffset);
+            var caretText = _editor.Document.GetText(caretLine.Offset, caretLine.Length);
+            var bm = System.Text.RegularExpressions.Regex.Match(caretText,
+                @"^(\s*)([A-Za-z_][\w\.]*)\s*(?::=|=)\s*\?\{([^}]*)\}\s*([^'""\n]*?)\s*(?:['""](.*))?$");
+            var bound = bm.Success;
+            var boundLine = bound ? caretLine : null;
+
+            var nameBox = new TextBox { Text = bound ? bm.Groups[2].Value : "x", Width = 90, Watermark = "name" };
+            var valueBox = new TextBox { Text = bound ? bm.Groups[3].Value.Trim() : "0", Width = 70, Watermark = "value" };
             var unitBox = new AutoCompleteBox
             {
                 Width = 150,
                 Watermark = "unit (e.g. kN/m)",
                 FilterMode = AutoCompleteFilterMode.Contains,
                 ItemsSource = AllCatalogUnits(),
-                MinimumPrefixLength = 0
+                MinimumPrefixLength = 0,
+                Text = bound ? bm.Groups[4].Value.Trim() : string.Empty
             };
-            var commentBox = new TextBox { Width = 150, Watermark = "comment (optional)" };
+            var commentBox = new TextBox { Text = bound ? bm.Groups[5].Value.Trim() : string.Empty, Width = 150, Watermark = "comment (optional)" };
 
             void DoInsert()
             {
@@ -2706,17 +2741,26 @@ namespace Calcpad.Avalonia
                 var field = $"{name}{assign}?{{{val}}}{unit}";
                 if (comment.Length > 0) field += "  '" + comment;
 
-                var line = _editor.Document.GetLineByOffset(_editor.CaretOffset);
-                EnsureInputDirectiveAbove(line);
-                line = _editor.Document.GetLineByOffset(_editor.CaretOffset);
-                var lineText = _editor.Document.GetText(line.Offset, line.Length);
-                var off = _editor.CaretOffset;
-                var prefix = lineText.Trim().Length > 0 ? "\n" : "";
-                _editor.Document.Insert(off, prefix + field);
+                if (bound && boundLine is not null)
+                {
+                    EnsureInputDirectiveAbove(boundLine);           // idempotent (already present)
+                    _editor.Document.Replace(boundLine.Offset, boundLine.Length, field);
+                }
+                else
+                {
+                    var line = _editor.Document.GetLineByOffset(_editor.CaretOffset);
+                    EnsureInputDirectiveAbove(line);
+                    line = _editor.Document.GetLineByOffset(_editor.CaretOffset);
+                    var lineText = _editor.Document.GetText(line.Offset, line.Length);
+                    var off = _editor.CaretOffset;
+                    var prefix = lineText.Trim().Length > 0 ? "\n" : "";
+                    _editor.Document.Insert(off, prefix + field);
+                }
                 CloseTableEditor();
                 _computeInputs = false;
                 _editor.Focus();
-                _status.Text = "Input field inserted — press Run (F5) to calculate the form";
+                _status.Text = bound ? "Input field updated — press Run (F5) to calculate the form"
+                                     : "Input field inserted — press Run (F5) to calculate the form";
                 ScheduleRender();
             }
 
@@ -2733,7 +2777,7 @@ namespace Calcpad.Avalonia
             TextBlock Lbl(string t) => new() { Text = t, VerticalAlignment = VerticalAlignment.Center, Margin = new global::Avalonia.Thickness(8, 0, 4, 0) };
 
             var row1 = new WrapPanel { Orientation = Orientation.Horizontal };
-            row1.Children.Add(new TextBlock { Text = "Input", FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center, Margin = new global::Avalonia.Thickness(0, 0, 4, 0) });
+            row1.Children.Add(new TextBlock { Text = bound ? "Edit input" : "Input", FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center, Margin = new global::Avalonia.Thickness(0, 0, 4, 0) });
             row1.Children.Add(nameBox);
             row1.Children.Add(Lbl(md ? ":=" : "="));
             row1.Children.Add(valueBox);
@@ -2743,7 +2787,7 @@ namespace Calcpad.Avalonia
             row1.Children.Add(commentBox);
 
             var row2 = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new global::Avalonia.Thickness(0, 2, 0, 0) };
-            row2.Children.Add(Tool("Insert at caret", DoInsert));
+            row2.Children.Add(Tool(bound ? "Update field" : "Insert at caret", DoInsert));
             row2.Children.Add(Tool("Close", () => { CloseTableEditor(); _editor.Focus(); }));
             row2.Children.Add(new TextBlock
             {
