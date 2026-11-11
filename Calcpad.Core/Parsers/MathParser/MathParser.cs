@@ -502,6 +502,11 @@ namespace Calcpad.Core
             _result = RealValue.Zero;
             _isCalculated = false;
             _functionDefinitionIndex = -1;
+            // Accept the Mathcad/SMath-style walrus ":=" as a plain "=" assignment.
+            // ":=" is never valid Calcpad otherwise (":" starts a format specifier, which can't begin with "="),
+            // so this is purely additive and doesn't change any currently-valid worksheet.
+            if (expression.IndexOf(":=") >= 0)
+                expression = NormalizeWalrusAssignment(expression);
             var input = _input.GetInput(expression, allowAssignment);
             new SyntaxAnalyser(_functions).Check(input, IsCalculation && IsEnabled, out var isFunctionDefinition);
             _input.OrderOperators(input, isFunctionDefinition || _isSolver > 0 || IsPlotting, _assignmentIndex);
@@ -515,6 +520,28 @@ namespace Calcpad.Core
             }
             else
                 _rpn = Input.GetRpn(input);
+        }
+
+        // Turns ":=" into "=" outside of quoted text, so "x := a + b" parses as the assignment "x = a + b".
+        private static string NormalizeWalrusAssignment(ReadOnlySpan<char> expression)
+        {
+            var sb = new StringBuilder(expression.Length);
+            char quote = '\0';
+            for (int i = 0; i < expression.Length; ++i)
+            {
+                var c = expression[i];
+                if (quote != '\0')
+                {
+                    sb.Append(c);
+                    if (c == quote) quote = '\0';
+                    continue;
+                }
+                if (c == '"' || c == '\'') { quote = c; sb.Append(c); continue; }
+                if (c == ':' && i + 1 < expression.Length && expression[i + 1] == '=')
+                    continue; // drop the ':'; the following '=' becomes the assignment operator
+                sb.Append(c);
+            }
+            return sb.ToString();
         }
 
         public bool ReadEquationFromCache(int cacheId)
