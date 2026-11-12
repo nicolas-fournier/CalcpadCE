@@ -46,6 +46,7 @@ namespace Calcpad.Avalonia
         private bool _switching;
         private readonly WebView _webView;
         private readonly TextBlock _status;
+        private TextBlock _editorHint = null!;      // greyed empty-state guidance shown on a blank worksheet
         private Button _runButton = null!;          // dynamic label/colour reflects form vs computed mode
         private Button _recalcInputsButton = null!; // "↻ Inputs" — only shown on an input-form worksheet
         // Important confirmations (input/image actions) hold the status line this long so the
@@ -144,6 +145,7 @@ namespace Calcpad.Avalonia
             _tabStrip = this.FindControl<StackPanel>("TabStrip")!;
             _webView = this.FindControl<WebView>("WebView")!;
             _status = this.FindControl<TextBlock>("StatusText")!;
+            _editorHint = this.FindControl<TextBlock>("EditorHint")!;
             _runButton = this.FindControl<Button>("RunButton")!;
             _recalcInputsButton = this.FindControl<Button>("RecalcInputsButton")!;
             _snippetsMenu = this.FindControl<MenuItem>("SnippetsMenu")!;
@@ -205,6 +207,7 @@ namespace Calcpad.Avalonia
                 UpdateTitle();
                 UpdateTabLabels();
                 UpdateRunButton();
+                UpdateEditorHint();
                 RefreshSnippetsMenuIfModeChanged();
                 ScheduleRender();
             };
@@ -3639,6 +3642,7 @@ namespace Calcpad.Avalonia
                     _status.Foreground = new SolidColorBrush(Color.Parse("#4B5563"));
                 }
                 UpdateRunButton();
+                UpdateEditorHint();
                 RefreshKeypadVariables(); // keep the keypad's Variables column in sync
             }
             catch (Exception ex)
@@ -3788,6 +3792,22 @@ namespace Calcpad.Avalonia
                 _runButton.ClearValue(Button.BackgroundProperty);
                 ToolTip.SetTip(_runButton, "Update the preview (F5).");
             }
+        }
+
+        // Shows the greyed empty-state guidance only while the worksheet has no real content yet
+        // (nothing but an optional #md directive and whitespace), so a blank new document teaches
+        // the core gesture instead of being an empty pane.
+        private void UpdateEditorHint()
+        {
+            if (_editorHint is null) return;
+            foreach (var raw in (_editor?.Text ?? string.Empty).Split('\n'))
+            {
+                var s = raw.Trim();
+                if (s.Length == 0 || s.StartsWith("#md", StringComparison.OrdinalIgnoreCase)) continue;
+                _editorHint.IsVisible = false;
+                return;
+            }
+            _editorHint.IsVisible = true;
         }
 
         // Sets the status line and holds it against the next auto-render for ~4s, so an action

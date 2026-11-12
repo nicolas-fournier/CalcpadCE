@@ -161,12 +161,18 @@
             <Border x:Name="TableOverlay" DockPanel.Dock="Bottom" IsVisible="False"
                     Background="#FBFBFC" BorderBrush="#E2E4E8" BorderThickness="0,1,0,0"
                     Padding="6,4" MaxHeight="280"/>
-            <aedit:TextEditor x:Name="Editor"
-                              FontFamily="Cascadia Code,Consolas,Menlo,monospace"
-                              FontSize="13"
-                              ShowLineNumbers="True"
-                              HorizontalScrollBarVisibility="Auto"
-                              VerticalScrollBarVisibility="Auto"/>
+            <Panel>
+              <aedit:TextEditor x:Name="Editor"
+                                FontFamily="Cascadia Code,Consolas,Menlo,monospace"
+                                FontSize="13"
+                                ShowLineNumbers="True"
+                                HorizontalScrollBarVisibility="Auto"
+                                VerticalScrollBarVisibility="Auto"/>
+              <TextBlock x:Name="EditorHint" IsHitTestVisible="False" IsVisible="False"
+                         Foreground="#9CA3AF" FontSize="12.5" Margin="56,30,16,0"
+                         VerticalAlignment="Top" HorizontalAlignment="Left" TextWrapping="Wrap" MaxWidth="440"
+                         Text="Type prose freely — it renders as text.&#x0a;Write a calculation like  L := 6*m  ·  or select a line and press Ctrl+=  (↔ Calc).&#x0a;Press F5 to update the preview.  ? Help has the full guide."/>
+            </Panel>
           </DockPanel>
         </Border>
 
