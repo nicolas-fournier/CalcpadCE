@@ -53,8 +53,9 @@
     <Content Include="Assets\Calcpad.xshd">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <!-- Quick-reference help page reused from the WPF app. -->
-    <Content Include="..\Calcpad.Wpf\doc\help.html" Link="Assets\help.html">
+    <!-- Quick-reference language page. Avalonia-owned copy (extended with the
+         markdown-first / input-form syntax); the WPF doc\help.html stays untouched. -->
+    <Content Include="Assets\help.html">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <!-- Avalonia app feature/shortcut guide. -->
