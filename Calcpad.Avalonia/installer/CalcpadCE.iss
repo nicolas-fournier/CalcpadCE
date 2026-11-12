@@ -2,7 +2,7 @@
 ; Build with: iscc /DAppVer=<version> CalcpadCE.iss   (or run build-installer.ps1)
 
 #ifndef AppVer
-  #define AppVer "7.6.5-preview"
+  #define AppVer "7.6.6-preview"
 #endif
 #define AppName "CalcpadCE"
 #define AppExe "CalcpadAvalonia.exe"

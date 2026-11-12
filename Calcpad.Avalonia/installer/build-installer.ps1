@@ -20,7 +20,7 @@ $publish = Join-Path $proj 'bin\Release\net10.0\win-x64\publish'
 # Version from Directory.Build.props
 [xml]$props = Get-Content (Join-Path $repo 'Directory.Build.props')
 $ver = @($props.Project.PropertyGroup.Version | Where-Object { $_ })[0]
-if (-not $ver) { $ver = '7.6.5-preview' }
+if (-not $ver) { $ver = '7.6.6-preview' }
 Write-Host "=== CalcpadCE $ver ===" -ForegroundColor Cyan
 
 Write-Host "Publishing self-contained win-x64..." -ForegroundColor Cyan
