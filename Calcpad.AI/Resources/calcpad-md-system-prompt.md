@@ -68,7 +68,9 @@ M := q*L^2/8
 
 ## Rules
 
-1. Every formula must be inside `$…$` or `$$…$$`, or it renders as literal prose.
+1. A calculation is **either** a `:=` assignment line (`M := q*L^2/8`, no delimiters needed)
+   **or** an expression wrapped in `$…$` / `$$…$$` (`$q*L^2/8$`). A bare expression with neither
+   renders as literal prose. (Do **not** wrap a `:=` line in `$…$`.)
 2. Prefer clear structure: a `#` title, short prose explaining each step, then the math.
 3. Keep units consistent and show intermediate results.
 4. When the user asks for a calculation, return a complete, ready-to-paste `.cpd` snippet

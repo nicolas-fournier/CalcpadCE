@@ -66,8 +66,7 @@
         <MenuItem Header="Toggle _AI assistant" Click="ToggleAi_Click"/>
         <MenuItem Header="Toggle _autocomplete" Click="ToggleCompletion_Click"/>
         <Separator/>
-        <MenuItem Header="Show _preview" Click="Run_Click" InputGesture="F5"/>
-        <MenuItem Header="Show _help" Click="ShowHelp_Click"/>
+        <MenuItem Header="_Update preview" Click="Run_Click" InputGesture="F5"/>
       </MenuItem>
       <MenuItem Header="_Help">
         <MenuItem Header="_Features &amp; shortcuts" Click="ShowAppHelp_Click"/>
@@ -80,18 +79,23 @@
       <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
         <ToggleButton x:Name="FilesToggle" Content="Files" IsChecked="True"
                       IsCheckedChanged="FilesToggle_Changed" ToolTip.Tip="Show/hide the file browser"/>
-        <ToggleButton x:Name="KeypadToggle" Content="Keypad" IsChecked="True"
+        <ToggleButton x:Name="KeypadToggle" Content="Keypad" IsChecked="False"
                       IsCheckedChanged="KeypadToggle_Changed" ToolTip.Tip="Show/hide the keypad"/>
         <ToggleButton x:Name="AiToggle" Content="AI" IsChecked="False"
                       IsCheckedChanged="AiToggle_Changed" ToolTip.Tip="Show/hide the AI assistant"/>
         <Border Width="1" Background="#E2E4E8" Margin="2,2"/>
-        <Button Content="Run (F5)" Click="Run_Click"/>
-        <Button Content="↻ Inputs" Click="RecalcInputs_Click"
+        <Button x:Name="RunButton" Content="Run (F5)" Click="Run_Click"
+                ToolTip.Tip="Update the preview (F5). On an input-form worksheet this toggles between editing the boxes and the calculated result."/>
+        <Button x:Name="RecalcInputsButton" Content="↻ Inputs" Click="RecalcInputs_Click" IsVisible="False"
                 ToolTip.Tip="Read the #input field values from the preview and recalculate"/>
-        <Button Content="Preview in browser" Click="OpenInBrowser_Click"/>
+        <Button Content="Open in browser" Click="OpenInBrowser_Click"
+                ToolTip.Tip="Open the rendered worksheet in your browser (for Print / PDF)"/>
+        <Button Content="? Help" Click="ShowAppHelp_Click"
+                ToolTip.Tip="Features &amp; shortcuts — the app guide"/>
+        <Border Width="1" Background="#E2E4E8" Margin="2,2"/>
         <TextBlock Text="Decimals" VerticalAlignment="Center" Foreground="#4B5563"/>
         <NumericUpDown x:Name="Decimals" Minimum="0" Maximum="15" Increment="1" Value="6"
-                       FormatString="0" Width="104" MinWidth="104" VerticalAlignment="Center"
+                       FormatString="0" Width="64" MinWidth="64" VerticalAlignment="Center"
                        HorizontalContentAlignment="Left" ValueChanged="Decimals_Changed"/>
         <TextBlock x:Name="StatusText" VerticalAlignment="Center" Foreground="#4B5563"/>
       </StackPanel>

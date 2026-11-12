@@ -31,7 +31,7 @@
   and a line is a <b>calculation</b> only when it is an assignment (<code>:=</code>) or delimited math
   (<code>$…$</code>, <code>$$…$$</code>). The left gutter marks each line —
   <b style="color:#16A34A">ƒ</b> calc · <b style="color:#2563EB">=</b> result ·
-  <b style="color:#EA580C">?</b> input · <b style="color:#1F7FAE">⊞</b> table ·
+  <b style="color:#EA580C">▭</b> input · <b style="color:#1F7FAE">⊞</b> table ·
   <b style="color:#0891B2">▣</b> image · <b style="color:#B2379B">#</b> heading (see <i>Gutter badges</i> below).
 </div>
 
@@ -54,15 +54,18 @@
 
 <h2>Input forms — editable fields (?)</h2>
 <table>
-  <tr><td class="k"><b>? Input</b> (format bar)</td>
+  <tr><td class="k"><b>▭ Field</b> (format bar)</td>
       <td>Insert an editable input field. Select a number to wrap it (<code>6</code> → <code>?{6}</code>),
           sit on a <code>name = value</code> line to toggle it, or click on an empty line to drop a fresh field.
-          A <code>#input</code> directive is added automatically so the box is <b>editable</b> in the preview.</td></tr>
+          A <code>#input</code> directive is added automatically so the box is <b>editable</b> in the preview.
+          The value in the braces is a <b>plain number</b>; units go after the brace (<code>?{6}m</code>, <code>?{10}kN/m</code>).</td></tr>
   <tr><td class="k"><kbd>F5</kbd> / <b>Run</b></td>
-      <td>On an <code>#input</code> worksheet, <kbd>F5</kbd> toggles between the <b>form</b> (edit the boxes) and the
-          <b>calculated</b> result (computes through <code>#input</code> with the values you entered). Press again to edit.</td></tr>
+      <td>On an <code>#input</code> worksheet the Run button names what it does and is tinted:
+          <b>▶ Compute (F5)</b> (blue) calculates with the values you entered, then it becomes
+          <b>✎ Edit inputs (F5)</b> (green) to go back to the boxes. Editing a result or prose line keeps your
+          entered values; changing a field returns to the form.</td></tr>
   <tr><td class="k"><b>↻ Inputs</b></td>
-      <td>Reads the values currently in the preview boxes and recalculates. Editing the source returns to the form.</td></tr>
+      <td>Reads the values currently in the preview boxes and recalculates (shown only on an input-form worksheet).</td></tr>
   <tr><td class="k">Switch unit</td>
       <td>Right-click a field (or any result) ▸ <b>Switch input/result unit</b>: a searchable list of
           dimension-compatible units. Composite units work too — type any combination
@@ -78,18 +81,20 @@
           <kbd>Tab</kbd> or <kbd>Enter</kbd>. Toggle it in View ▸ Toggle autocomplete.</td></tr>
   <tr><td class="k">Hover</td><td>Hover a unit, function, constant, or a symbol you defined to see its description / comment.</td></tr>
   <tr><td class="k"><kbd>F12</kbd></td><td>Go to the definition of the variable/function under the caret.</td></tr>
-  <tr><td class="k">Right-click</td><td>Context menu: Cut/Copy/Paste, ↔ Calc, Insert input field (?), Insert table, Insert image,
-      Switch result/input unit, Go to definition, Insert function, Undo/Redo. Right-click keeps your caret and
-      selection — it no longer jumps to the click.</td></tr>
+  <tr><td class="k">Right-click</td><td>Context menu: Cut/Copy/Paste, ↔ Calc, Force to text, Input field…, Insert table, Insert image,
+      Switch result/input unit, Go to definition, Insert function, Undo/Redo. <b>Input field…</b> is context-aware —
+      it edits an existing field, quick-wraps a selected number, or opens the panel for a new one. Right-click keeps your
+      caret and selection — it no longer jumps to the click.</td></tr>
   <tr><td class="k">Gutter badges</td>
-      <td>The left margin marks each line at a glance:
+      <td>The left margin marks each line at a glance (hover a badge for its meaning):
           <b style="color:#16A34A">ƒ</b> calculation ·
           <b style="color:#2563EB">=</b> result ·
-          <b style="color:#EA580C">?</b> input field ·
+          <b style="color:#EA580C">▭</b> input field ·
           <b style="color:#1F7FAE">⊞</b> table ·
           <b style="color:#0891B2">▣</b> image ·
           <b style="color:#B2379B">#</b> heading.
-          Click <b style="color:#1F7FAE">⊞</b> to edit the table, <b style="color:#EA580C">?</b> to edit the input field.</td></tr>
+          Click <b style="color:#1F7FAE">⊞</b> to edit the table, <b style="color:#EA580C">▭</b> to edit the input field,
+          or <b style="color:#16A34A">ƒ</b>/blank to flip a line calc↔prose.</td></tr>
   <tr><td class="k">Syntax colours</td>
       <td><span class="var">variables</span> · <span class="unit">units</span> ·
           <span style="color:#1f7fae">functions</span> · <span class="h">keywords</span> ·
@@ -100,7 +105,9 @@
 <table>
   <tr><td class="k"><kbd>Ctrl</kbd>+<kbd>N</kbd> / <kbd>O</kbd> / <kbd>S</kbd> / <kbd>Shift</kbd>+<kbd>S</kbd></td>
       <td>New · Open · Save · Save As. Open files appear as <b>tabs</b>.</td></tr>
-  <tr><td class="k"><kbd>F5</kbd></td><td>Recalculate &amp; show the preview. On an <code>#input</code> worksheet it toggles the editable <b>form</b> ⇄ the <b>calculated</b> result.</td></tr>
+  <tr><td class="k"><kbd>F5</kbd></td><td>Update the preview. On an <code>#input</code> worksheet it toggles the editable <b>form</b> ⇄ the <b>calculated</b> result.</td></tr>
+  <tr><td class="k"><b>? Help</b> (toolbar)</td><td>Opens this guide at any time. The <b>Help</b> menu also has the language <i>Quick reference</i>.</td></tr>
+  <tr><td class="k">Status bar</td><td>Shows the render time, or turns <b style="color:#DC2626">red with an error count</b> when the worksheet has errors (the matching text is red in the preview). A failed render dims the old preview so you don't trust stale output.</td></tr>
   <tr><td class="k">File ▸ Export</td><td>HTML, Word (.docx), or Print/PDF (via the browser).</td></tr>
 </table>
 
@@ -118,9 +125,9 @@
 
 <h2>Snippets &amp; formatting</h2>
 <p>The <b>Snippets</b> menu (and autocomplete) are mode-aware — markdown vs classic. Each item shows its
-trigger key. The formatting toolbar adds headings, bold/italic, lists, tables, inline/block math, ↔ Calc,
-<b>? Input</b> fields, and <b>🖼 Image</b> (pick an image — saved worksheets copy it into an <code>Images/</code>
-folder and link it relatively; markdown uses <code>![…](…)</code>, classic uses <code>&lt;img&gt;</code>).
+trigger key. The formatting toolbar adds headings, bold/italic, lists, quotes, inline/block math, ↔ Calc,
+<b>⊞ Table</b> (grid editor), <b>▭ Field</b> (editable input), and <b>▣ Image</b> (pick an image — saved worksheets copy it
+into an <code>Images/</code> folder and link it relatively; markdown uses <code>![…](…)</code>, classic uses <code>&lt;img&gt;</code>).
 Compute snippets: <code>plot</code>, <code>vector</code>, <code>repeat</code>, <code>def</code>, <code>convert</code>, <code>beam</code>.</p>
 
 <h2>Options bar</h2>

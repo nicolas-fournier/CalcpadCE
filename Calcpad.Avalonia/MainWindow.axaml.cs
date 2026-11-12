@@ -46,6 +46,15 @@ namespace Calcpad.Avalonia
         private bool _switching;
         private readonly WebView _webView;
         private readonly TextBlock _status;
+        private Button _runButton = null!;          // dynamic label/colour reflects form vs computed mode
+        private Button _recalcInputsButton = null!; // "↻ Inputs" — only shown on an input-form worksheet
+        // Important confirmations (input/image actions) hold the status line this long so the
+        // auto-render's "rendered in N ms" doesn't wipe them before the user can read them.
+        private DateTime _statusHoldUntil;
+        // Signature of the input-field structure captured when we switched to the computed view,
+        // so an unrelated edit (a result line, prose) keeps the entered values instead of discarding
+        // them; only a change to the #input structure drops back to the editable form.
+        private string _inputSig = string.Empty;
         private readonly MenuItem _snippetsMenu;
         private readonly MenuItem _recentMenu;
         private MenuItem _unitSwitchItem;
@@ -135,6 +144,8 @@ namespace Calcpad.Avalonia
             _tabStrip = this.FindControl<StackPanel>("TabStrip")!;
             _webView = this.FindControl<WebView>("WebView")!;
             _status = this.FindControl<TextBlock>("StatusText")!;
+            _runButton = this.FindControl<Button>("RunButton")!;
+            _recalcInputsButton = this.FindControl<Button>("RecalcInputsButton")!;
             _snippetsMenu = this.FindControl<MenuItem>("SnippetsMenu")!;
             _recentMenu = this.FindControl<MenuItem>("RecentMenu")!;
             _keypadHost = this.FindControl<Border>("KeypadHost")!;
@@ -167,11 +178,11 @@ namespace Calcpad.Avalonia
             InitHoverTooltips();
             InitCompletion();
             InitTableEditor();
-            InitLineNumberToggle();
             try { _editor.TextArea.LeftMargins.Add(new CalcGutterMargin(ClassifyLineBadge, ToggleLineByOffset)); } catch { }
             BuildEditorContextMenu();
             InitEditorDrop();
             BuildKeypad();
+            _keypadHost.IsVisible = _keypadToggle.IsChecked == true; // honour the default-closed toggle (handler is guarded during XAML load)
             BuildFormatBar();
             BuildOptionsBar();
 
@@ -183,10 +194,17 @@ namespace Calcpad.Avalonia
                 if (!_ready || _switching) return;
                 _dirty = true;
                 if (_active is not null) _active.Dirty = true;
-                _inputValues.Clear(); // edits invalidate the #input line mapping
-                _computeInputs = false; // back to the editable form view after any edit
+                // An edit that leaves the #input structure intact (e.g. tweaking a result line or
+                // prose) keeps the computed view and the entered values; any change to the input
+                // fields themselves drops back to the editable form so the boxes aren't stale.
+                if (!(_computeInputs && InputSignature() == _inputSig))
+                {
+                    _inputValues.Clear();
+                    _computeInputs = false;
+                }
                 UpdateTitle();
                 UpdateTabLabels();
+                UpdateRunButton();
                 RefreshSnippetsMenuIfModeChanged();
                 ScheduleRender();
             };
@@ -786,6 +804,11 @@ namespace Calcpad.Avalonia
             var prev = full[col];
             if (!(char.IsLetterOrDigit(prev) || prev == ')')) return;
 
+            // Don't offer this inside ordinary prose ("cost-benefit", "and/or", "trade-off"): only
+            // when the line looks like a calculation — it has a number or an assignment '='.
+            if (!System.Text.RegularExpressions.Regex.IsMatch(text, @"\d") && !text.Contains('='))
+                return;
+
             var w = new AvaloniaEdit.CodeCompletion.CompletionWindow(_editor.TextArea)
             {
                 StartOffset = _editor.CaretOffset,
@@ -874,32 +897,6 @@ namespace Calcpad.Avalonia
             }
         }
 
-        // ---- Double-click a line number to toggle that line to/from a calculation ----
-
-        private void InitLineNumberToggle()
-        {
-            Loaded += (_, _) =>
-            {
-                foreach (var m in _editor.TextArea.LeftMargins)
-                {
-                    if (m is AvaloniaEdit.Editing.LineNumberMargin lnm)
-                    {
-                        lnm.DoubleTapped += (_, e) =>
-                        {
-                            var pos = _editor.GetPositionFromPoint(e.GetPosition(_editor.TextArea.TextView));
-                            if (pos.HasValue)
-                            {
-                                _editor.CaretOffset = _editor.Document.GetOffset(pos.Value.Location);
-                                _editor.SelectionLength = 0;
-                                ToggleCalc();
-                            }
-                            e.Handled = true;
-                        };
-                    }
-                }
-            };
-        }
-
         // ---- Go to definition of the variable/function under the caret ----
 
         private void GoToDefinition()
@@ -948,8 +945,7 @@ namespace Calcpad.Avalonia
             menu.Items.Add(new Separator());
             Item("Toggle ↔ Calc", ToggleCalc);
             Item("Force to text", ForceToText);
-            var inputItem = Item("Insert input field (?)", OpenInputPanel);
-            var quickInputItem = Item("Wrap / toggle number as input", InsertInputField);
+            var inputItem = Item("Input field…", InputFieldSmart);
             var tableItem = Item("Insert table…", OpenTableEditor);
             Item("Insert image…", () => _ = InsertImageAsync());
             BuildUnitSwitchItem();
@@ -966,15 +962,13 @@ namespace Calcpad.Avalonia
             {
                 var lineText = CaretLineText();
                 tableItem.Header = ClassifyLineBadge(lineText) == 't' ? "Edit table…" : "Insert table…";
-                var sel = _editor.SelectedText ?? string.Empty;
+                var sel = (_editor.SelectedText ?? string.Empty).Trim();
                 var onInput = System.Text.RegularExpressions.Regex.IsMatch(lineText, @"=\s*\?\{");
-                // On an existing field the panel edits it in place; otherwise it inserts a new one.
-                inputItem.Header = onInput ? "Edit input field…" : "Insert input field…";
-                // Quick wrap/toggle: only meaningful on a number selection or a plain assignment.
-                quickInputItem.Header = onInput ? "Remove input field (?)" : "Wrap / toggle number as input";
-                quickInputItem.IsVisible = onInput
-                    || System.Text.RegularExpressions.Regex.IsMatch(sel.Trim(), @"^-?\d+(?:[.,]\d+)?$")
+                var quick = System.Text.RegularExpressions.Regex.IsMatch(sel, @"^-?\d+(?:[.,]\d+)?$")
                     || System.Text.RegularExpressions.Regex.IsMatch(lineText, @"^\s*[A-Za-z_][\w\.]*\s*(?::=|=)\s*-?\d");
+                // One context-aware item: edit an existing field, quick-wrap a selected number /
+                // assignment inline, or open the panel to build a fresh field.
+                inputItem.Header = onInput ? "Edit input field…" : quick ? "Wrap number as input field" : "Insert input field…";
                 // Offer unit switching on calculation lines (results) and on input-field lines.
                 _unitSwitchItem.IsEnabled = ClassifyLineBadge(lineText) is 'f' or 'r' or 'i' ||
                     (lineText.Contains('=') && !lineText.TrimStart().StartsWith("#"));
@@ -1221,7 +1215,12 @@ namespace Calcpad.Avalonia
             {
                 case 't': OpenTableEditor(); return;
                 case 'i': OpenInputPanel(); return;
-                case 'g': return;
+                case 'g': // image: select the line and point to the Image button to replace it
+                    var gl = _editor.Document.GetLineByOffset(_editor.CaretOffset);
+                    _editor.Select(gl.Offset, gl.Length);
+                    _status.Text = "Image line — edit the ![…](…) text, or use ▣ Image to pick another";
+                    return;
+                case '#': return; // heading: not a calculation, nothing to toggle
                 default: ToggleCalc(); return;
             }
         }
@@ -1265,13 +1264,17 @@ namespace Calcpad.Avalonia
         }
 
         // A line ending in a lone '=' is a calculator-style "evaluate this" request (see
-        // EvaluateTrailingEquals), e.g. "x*2=".
+        // EvaluateTrailingEquals), e.g. "x*2=". A bare assignment target ("M =", "f(x) =") is an
+        // unfinished assignment, not an evaluation — EvaluateTrailingEquals skips it, so the badge
+        // must too, otherwise the '=' result badge would lie about a line that renders as prose.
         private static bool IsEvalRequest(string t)
         {
             var e = t.TrimEnd();
-            return e.Length >= 2 && e[^1] == '=' &&
-                   !e.EndsWith(":=") && !e.EndsWith("==") &&
-                   !e.EndsWith(">=") && !e.EndsWith("<=") && !e.EndsWith("!=");
+            if (e.Length < 2 || e[^1] != '=' ||
+                e.EndsWith(":=") || e.EndsWith("==") ||
+                e.EndsWith(">=") || e.EndsWith("<=") || e.EndsWith("!=")) return false;
+            var expr = e[..^1].TrimEnd();
+            return !System.Text.RegularExpressions.Regex.IsMatch(expr, @"^\s*[A-Za-z_]\w*(?:\s*\([^)]*\))?\s*$");
         }
 
 
@@ -1367,7 +1370,7 @@ namespace Calcpad.Avalonia
                 {
                     // Unsaved worksheet: no base href, so use an absolute file:// URI.
                     url = new Uri(srcPath).AbsoluteUri;
-                    _status.Text = "Image linked by absolute path — save the worksheet to copy it into Images/";
+                    StatusHold("Image linked by absolute path — save the worksheet to copy it into Images/");
                 }
 
                 InsertAtCaret(CurrentMarkdownFull()
@@ -1806,13 +1809,15 @@ namespace Calcpad.Avalonia
             return sb.ToString();
         }
 
-        // Pulls the <p class="err"> messages out of the rendered HTML as plain text.
+        // Pulls the error messages out of the rendered HTML as plain text. Errors appear both as
+        // block <p class="err">…</p> (parse/line errors) and inline <span class="err">…</span>
+        // (per-value errors: undefined variable, unit mismatch, ∞) — match both.
         private static System.Collections.Generic.List<string> ExtractRenderErrors(string html)
         {
             var list = new System.Collections.Generic.List<string>();
             if (string.IsNullOrEmpty(html)) return list;
             foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
-                html, "class=\"err\"[^>]*>(.*?)</p>", System.Text.RegularExpressions.RegexOptions.Singleline))
+                html, "class=\"err\"[^>]*>(.*?)</(?:p|span)>", System.Text.RegularExpressions.RegexOptions.Singleline))
             {
                 var text = System.Text.RegularExpressions.Regex.Replace(m.Groups[1].Value, "<[^>]+>", "");
                 text = System.Net.WebUtility.HtmlDecode(text).Trim();
@@ -2704,6 +2709,19 @@ namespace Calcpad.Avalonia
 
         private bool _inputPanelActive;
 
+        // Context-aware input action for the right-click menu: edit an existing field in the panel,
+        // quick-wrap a selected number / assignment inline, or open the panel for a fresh field.
+        private void InputFieldSmart()
+        {
+            var lineText = CaretLineText();
+            if (System.Text.RegularExpressions.Regex.IsMatch(lineText, @"=\s*\?\{")) { OpenInputPanel(); return; }
+            var sel = (_editor.SelectedText ?? string.Empty).Trim();
+            if (System.Text.RegularExpressions.Regex.IsMatch(sel, @"^-?\d+(?:[.,]\d+)?$") ||
+                System.Text.RegularExpressions.Regex.IsMatch(lineText, @"^\s*[A-Za-z_][\w\.]*\s*(?::=|=)\s*-?\d"))
+            { InsertInputField(); return; }   // inline quick wrap/toggle
+            OpenInputPanel();                 // build a new field in the panel
+        }
+
         // Opens a small docked panel below the code to enter an input field fast: name, default
         // value and (compatible) unit — composites like kN/m accepted — then Insert at the caret.
         private void OpenInputPanel()
@@ -2742,6 +2760,16 @@ namespace Calcpad.Avalonia
                 var name = string.IsNullOrWhiteSpace(nameBox.Text) ? "x" : nameBox.Text.Trim();
                 var val = (valueBox.Text ?? "0").Trim().Replace(',', '.');
                 if (val.Length == 0) val = "0";
+                // The ?{default} brace must hold a plain number — an expression/unit there is a
+                // malformed field. Flag it instead of silently emitting broken code.
+                if (!System.Text.RegularExpressions.Regex.IsMatch(val, @"^-?\d+(?:\.\d+)?$"))
+                {
+                    valueBox.Foreground = new SolidColorBrush(Color.Parse("#DC2626"));
+                    _status.Text = "Default must be a plain number (e.g. 6 or 10.5) — put units in the unit box";
+                    _status.Foreground = new SolidColorBrush(Color.Parse("#DC2626"));
+                    valueBox.Focus();
+                    return;
+                }
                 var unit = (unitBox.Text ?? string.Empty).Trim();
                 var comment = (commentBox.Text ?? string.Empty).Trim();
                 var assign = md ? " := " : " = ";
@@ -2766,8 +2794,9 @@ namespace Calcpad.Avalonia
                 CloseTableEditor();
                 _computeInputs = false;
                 _editor.Focus();
-                _status.Text = bound ? "Input field updated — press Run (F5) to calculate the form"
-                                     : "Input field inserted — press Run (F5) to calculate the form";
+                StatusHold(bound ? "Input field updated — press Compute (F5) to calculate"
+                                 : "Input field inserted — press Compute (F5) to calculate");
+                UpdateRunButton();
                 ScheduleRender();
             }
 
@@ -2798,7 +2827,7 @@ namespace Calcpad.Avalonia
             row2.Children.Add(Tool("Close", () => { CloseTableEditor(); _editor.Focus(); }));
             row2.Children.Add(new TextBlock
             {
-                Text = "Adds #input so the box is editable. Enter = insert · Esc = close. Unit accepts composites (kN/m, N/mm^2).",
+                Text = "Value = a plain number (6, 10.5); units go in the unit box (composites like kN/m ok). Adds #input so the box is editable. Enter = insert · Esc = close.",
                 FontSize = 11, VerticalAlignment = VerticalAlignment.Center,
                 Margin = new global::Avalonia.Thickness(8, 0, 0, 0), Foreground = new SolidColorBrush(Color.Parse("#6B7280"))
             });
@@ -3135,19 +3164,36 @@ namespace Calcpad.Avalonia
                 return cb;
             }
 
-            bar.Children.Add(Check("Substitute", _substitute, v => _substitute = v));
-            bar.Children.Add(Check("Format equations", _formatEquations, v => _formatEquations = v));
-            bar.Children.Add(Check("Complex", _complex, v => _complex = v));
-            bar.Children.Add(Check("Adaptive plots", _adaptivePlot, v => _adaptivePlot = v));
+            Control Sep() => new Border
+            {
+                Width = 1, Background = new SolidColorBrush(Color.Parse("#D5D8DD")),
+                Margin = new global::Avalonia.Thickness(2, 1, 14, 1)
+            };
+
+            var subst = Check("Substitute", _substitute, v => _substitute = v);
+            ToolTip.SetTip(subst, "Show computed values substituted into each formula (a = 3 instead of just a)");
+            bar.Children.Add(subst);
+            var fmtEq = Check("Format equations", _formatEquations, v => _formatEquations = v);
+            ToolTip.SetTip(fmtEq, "Render math as typeset equations (fractions, powers) rather than plain text");
+            bar.Children.Add(fmtEq);
+            var cplx = Check("Complex", _complex, v => _complex = v);
+            ToolTip.SetTip(cplx, "Enable complex-number arithmetic (results may have an imaginary part)");
+            bar.Children.Add(cplx);
+            bar.Children.Add(Sep());
+            var adapt = Check("Adaptive plots", _adaptivePlot, v => _adaptivePlot = v);
+            ToolTip.SetTip(adapt, "Add extra sample points where a plotted curve bends sharply, for a smoother chart");
+            bar.Children.Add(adapt);
             var embed = Check("Embed images", _embedImages, v => _embedImages = v);
             ToolTip.SetTip(embed, "Embed plots/images in the HTML as base64; save to files if unchecked");
             bar.Children.Add(embed);
+            bar.Children.Add(Sep());
             var rel = Check("Relative paths", _relativePaths, v => _relativePaths = v);
             ToolTip.SetTip(rel, "Insert #include and image paths relative to the current worksheet (not absolute)");
             bar.Children.Add(rel);
             var auto = Check("Auto-calc", _autoCalc, v => _autoCalc = v);
             ToolTip.SetTip(auto, "Typing 'name =' on a line auto-upgrades it to a calculation (name := …)");
             bar.Children.Add(auto);
+            bar.Children.Add(Sep());
 
             // Word-template export (doesn't affect the HTML preview, so no re-render on toggle).
             var tmpl = new CheckBox
@@ -3172,6 +3218,7 @@ namespace Calcpad.Avalonia
             bar.Children.Add(pick);
             UpdateTemplateTip();
 
+            bar.Children.Add(Sep());
             bar.Children.Add(LabeledCombo("Angles", new[] { "Deg", "Rad", "Grad" }, _degrees, i => _degrees = i));
             bar.Children.Add(LabeledCombo("Units", new[] { "m", "cm", "mm" }, UnitsIndex(_units), i => _units = i switch { 1 => "cm", 2 => "mm", _ => "m" }));
 
@@ -3219,7 +3266,6 @@ namespace Calcpad.Avalonia
             Add("S", "~~‸~~", "<del>‸</del>", "Strikethrough");
             bar.Children.Add(new Border { Width = 10 });
             Add("• List", "- ‸", "<ul><li>‸</li></ul>", "Bullet list");
-            Add("Table", "| A | B |\n| --- | --- |\n| ‸ |  |", "<table><tr><td>‸</td></tr></table>", "Table");
             Add("❝ Quote", "> ‸", "<blockquote>‸</blockquote>", "Quote");
             bar.Children.Add(new Border { Width = 10 });
             Add("$x$", "$‸$", "‸", "Inline math");
@@ -3236,11 +3282,11 @@ namespace Calcpad.Avalonia
             ToolTip.SetTip(table, "Inline grid: paste from Excel or type data, insert/replace as a Calcpad matrix or a markdown table");
             bar.Children.Add(table);
 
-            var input = MakeButton("? Input", OpenInputPanel);
-            ToolTip.SetTip(input, "Open the input panel: enter name / value / unit (composites like kN/m ok) and insert an editable field. Adds #input so the box is editable; press Run (F5) to calculate. (Right-click in the code for the quick wrap/toggle.)");
+            var input = MakeButton("▭ Field", OpenInputPanel);
+            ToolTip.SetTip(input, "Insert an editable input field: name / value / unit (composites like kN/m ok). Adds #input so the box is editable; press Compute (F5) to calculate. (Right-click in the code for the quick wrap/toggle.)");
             bar.Children.Add(input);
 
-            var image = MakeButton("🖼 Image", () => _ = InsertImageAsync());
+            var image = MakeButton("▣ Image", () => _ = InsertImageAsync());
             ToolTip.SetTip(image, "Pick an image and insert it. Saved worksheets copy it into an Images/ folder and link it relatively; markdown uses ![…](…), classic uses <img>.");
             bar.Children.Add(image);
 
@@ -3275,6 +3321,17 @@ namespace Calcpad.Avalonia
             string replacement;
             if (CurrentMarkdownFull())
             {
+                // A heading, directive, image or table isn't math — $-wrapping it produces broken
+                // output (e.g. "# Title" → "$# Title$"). Leave those lines untouched.
+                if (body.Length == 0 ||
+                    body.StartsWith("#") ||                                   // heading or #directive
+                    body.StartsWith("![") || body.StartsWith("<img", StringComparison.OrdinalIgnoreCase) ||
+                    body.StartsWith("|"))                                     // markdown table row
+                {
+                    _status.Text = "That line isn't a calculation (heading / directive / image / table)";
+                    _editor.Focus();
+                    return;
+                }
                 var Rx = System.Text.RegularExpressions.Regex.IsMatch(body, @"^[A-Za-z_]\w*\s*(?:\([^)]*\))?\s*=(?!=)");
                 // Shape-aware: pick the lightest delimiter so the user never types $$ by hand.
                 if (body.StartsWith("$$") && body.EndsWith("$$") && body.Length >= 4)
@@ -3376,7 +3433,7 @@ namespace Calcpad.Avalonia
                     var def = sel.Trim().Replace(',', '.');
                     _editor.Document.Replace(_editor.SelectionStart, _editor.SelectionLength, $"?{{{def}}}");
                     EnsureInputDirectiveAbove(line);
-                    AfterInputInsert("Input field added — press Run (F5) to calculate the form");
+                    AfterInputInsert("Input field added — press Compute (F5) to calculate");
                     return;
                 }
 
@@ -3391,9 +3448,10 @@ namespace Calcpad.Avalonia
                     _editor.Document.Replace(line.Offset, line.Length,
                         m.Groups[1].Value + newRhs + m.Groups[4].Value);
                     if (!revert) EnsureInputDirectiveAbove(line);
+                    else RemoveOrphanInputDirective();
                     AfterInputInsert(revert
                         ? "Input field removed"
-                        : "Input field added — press Run (F5) to calculate the form");
+                        : "Input field added — press Compute (F5) to calculate");
                     return;
                 }
 
@@ -3409,7 +3467,7 @@ namespace Calcpad.Avalonia
                 _editor.CaretOffset = nameOff + 1;
                 _editor.SelectionStart = nameOff;
                 _editor.SelectionLength = 1;                            // "x" selected → type the name
-                AfterInputInsert("Name the input, then press Run (F5) to calculate the form");
+                AfterInputInsert("Name the input, then press Compute (F5) to calculate");
             }
             catch (Exception ex) { _status.Text = "Insert input failed: " + ex.Message; }
         }
@@ -3429,11 +3487,28 @@ namespace Calcpad.Avalonia
             _editor.Document.Insert(line.Offset, "#input\n");
         }
 
+        // After a field is removed, drop any now-orphaned bare #input / #pause directive lines
+        // (when no ?{…} field remains), so the directive doesn't linger and freeze the sheet.
+        private void RemoveOrphanInputDirective()
+        {
+            if (_editor.Text?.Contains("?{") == true) return; // fields remain → keep the directive
+            for (var n = _editor.Document.LineCount; n >= 1; n--)
+            {
+                var dl = _editor.Document.GetLineByNumber(n);
+                var t = _editor.Document.GetText(dl.Offset, dl.Length).TrimStart();
+                if ((t.StartsWith("#input", StringComparison.OrdinalIgnoreCase) ||
+                     t.StartsWith("#pause", StringComparison.OrdinalIgnoreCase)) &&
+                    (t.Length == 6 || t[6] is ' ' or '\t' or '\'' or '"'))
+                    _editor.Document.Remove(dl.Offset, dl.TotalLength); // whole line incl. newline
+            }
+        }
+
         private void AfterInputInsert(string status)
         {
             _computeInputs = false;   // show the editable form for the new field
             _editor.Focus();
-            _status.Text = status;
+            StatusHold(status);
+            UpdateRunButton();
             ScheduleRender();
         }
 
@@ -3495,7 +3570,7 @@ namespace Calcpad.Avalonia
                     _computeInputs = false;
                     _inputValues.Clear();
                     Render();
-                    _status.Text = "Input form — edit the boxes, then press Run (F5) to calculate";
+                    StatusHold("Editing inputs — change the boxes, then press Compute (F5)");
                 }
                 else
                 {
@@ -3542,13 +3617,37 @@ namespace Calcpad.Avalonia
                 var path = _previewFiles[_previewSlot];
                 File.WriteAllText(path, BuildPage(_lastHtml), new UTF8Encoding(false));
                 _webView.LoadUrl(new Uri(path).AbsoluteUri);
+                _webView.Opacity = 1; // clear any "stale" dimming from a previous failed render
 
-                _status.Text = $"{(_currentFile is null ? "untitled" : Path.GetFileName(_currentFile))} · rendered in {sw.ElapsedMilliseconds} ms";
+                // Count real errors (the engine's "Paused!" form banner isn't one) so the status
+                // tells the truth instead of always reporting success.
+                var errors = ExtractRenderErrors(_lastHtml)
+                    .Where(e => e.IndexOf("Paused", StringComparison.OrdinalIgnoreCase) < 0).Count();
+                var name = _currentFile is null ? "untitled" : Path.GetFileName(_currentFile);
+                if (errors > 0)
+                {
+                    _status.Text = $"{name} · {errors} error{(errors == 1 ? "" : "s")} — see red text in the preview";
+                    _status.Foreground = new SolidColorBrush(Color.Parse("#DC2626"));
+                }
+                else if (DateTime.UtcNow < _statusHoldUntil)
+                {
+                    // keep the held action confirmation; don't clobber it with the timing message
+                }
+                else
+                {
+                    _status.Text = $"{name} · rendered in {sw.ElapsedMilliseconds} ms";
+                    _status.Foreground = new SolidColorBrush(Color.Parse("#4B5563"));
+                }
+                UpdateRunButton();
                 RefreshKeypadVariables(); // keep the keypad's Variables column in sync
             }
             catch (Exception ex)
             {
-                _status.Text = "Error: " + ex.Message;
+                // Leave the previous (now out-of-date) preview on screen but visibly dim it, so the
+                // user can't mistake stale output for the current worksheet.
+                _webView.Opacity = 0.45;
+                _status.Text = "Preview out of date — " + ex.Message;
+                _status.Foreground = new SolidColorBrush(Color.Parse("#DC2626"));
             }
         }
 
@@ -3568,12 +3667,14 @@ namespace Calcpad.Avalonia
             code = EvaluateTrailingEquals(code, CurrentMarkdownFull());
             if (_inputValues.Count > 0)
                 code = ApplyInputValues(code, _inputValues);
-            // Computed view: neutralize #input/#pause so results calculate with the entered
-            // values instead of the engine pausing the form (the F5 "continue" resume, ported).
-            if (_computeInputs)
+            // Computed view: neutralize #input/#pause so results calculate with the entered values
+            // instead of the engine pausing the form (the F5 "continue" resume, ported). Also
+            // neutralize when there is no ?{…} field left to edit — an orphaned #input directive
+            // would otherwise freeze and blank the whole sheet below it with nothing to explain why.
+            if (_computeInputs || !code.Contains("?{"))
                 code = NeutralizeInputDirectives(code);
 
-            var parser = new ExpressionParser { Settings = BuildSettings() };
+            var parser = new ExpressionParser { Settings = BuildSettings(), Debug = true };
             parser.Parse(code, true, false);
             return parser.HtmlResult ?? string.Empty;
         }
@@ -3643,6 +3744,61 @@ namespace Calcpad.Avalonia
             return false;
         }
 
+        // A stable fingerprint of the input-field structure: the total line count plus the text of
+        // every line that holds a ?{…} field, keyed by line number. If this is unchanged after an
+        // edit, the entered #input values still map correctly and the computed view can be kept.
+        private string InputSignature()
+        {
+            var text = _editor?.Text ?? string.Empty;
+            var lines = text.Split('\n');
+            var sb = new StringBuilder();
+            sb.Append(lines.Length).Append('|');
+            for (var i = 0; i < lines.Length; i++)
+                if (lines[i].Contains("?{"))
+                    sb.Append(i + 1).Append(':').Append(lines[i].Trim()).Append('\n');
+            return sb.ToString();
+        }
+
+        // Reflects the form/computed state on the toolbar so the mode is never invisible: on an
+        // input-form worksheet the Run button names the action it performs (compute vs edit) and is
+        // tinted, and the "↻ Inputs" button only appears there; otherwise it is a plain "Run (F5)".
+        private void UpdateRunButton()
+        {
+            if (_runButton is null) return;
+            if (DocHasInputForm())
+            {
+                _recalcInputsButton.IsVisible = true;
+                if (_computeInputs)
+                {
+                    _runButton.Content = "✎ Edit inputs (F5)";
+                    _runButton.Background = new SolidColorBrush(Color.Parse("#DCFCE7")); // green: showing results
+                    ToolTip.SetTip(_runButton, "Showing the calculated result. Press F5 to go back to editing the input boxes.");
+                }
+                else
+                {
+                    _runButton.Content = "▶ Compute (F5)";
+                    _runButton.Background = new SolidColorBrush(Color.Parse("#DBEAFE")); // blue: editable form
+                    ToolTip.SetTip(_runButton, "Editing the input boxes. Press F5 to calculate the worksheet with the entered values.");
+                }
+            }
+            else
+            {
+                _recalcInputsButton.IsVisible = false;
+                _runButton.Content = "Run (F5)";
+                _runButton.ClearValue(Button.BackgroundProperty);
+                ToolTip.SetTip(_runButton, "Update the preview (F5).");
+            }
+        }
+
+        // Sets the status line and holds it against the next auto-render for ~4s, so an action
+        // confirmation (input inserted, image linked…) isn't immediately wiped by "rendered in N ms".
+        private void StatusHold(string message)
+        {
+            _status.Text = message;
+            _status.Foreground = new SolidColorBrush(Color.Parse("#4B5563"));
+            _statusHoldUntil = DateTime.UtcNow.AddSeconds(4);
+        }
+
         // Injects interactive #input values back into the source by line (ported from the CLI
         // PreviewServer), so the parser recalculates with the entered numbers.
         private static string ApplyInputValues(string source, List<(int line, string value)> inputs)
@@ -3691,10 +3847,11 @@ namespace Calcpad.Avalonia
                                           el.GetProperty("value").GetString() ?? string.Empty));
                 }
                 _computeInputs = true; // switch to the computed view (neutralizes #input)
+                _inputSig = InputSignature(); // remember the structure so unrelated edits keep these values
                 Render();
-                _status.Text = _inputValues.Count > 0
-                    ? $"Calculated with {_inputValues.Count} input value(s) — press Run (F5) to edit the inputs again"
-                    : "Calculated — press Run (F5) to edit the inputs again";
+                StatusHold(_inputValues.Count > 0
+                    ? $"Calculated with {_inputValues.Count} input value(s) — press Edit inputs (F5) to change them"
+                    : "Calculated — press Edit inputs (F5) to change the inputs");
             }
             catch (Exception ex) { _status.Text = "Inputs failed: " + ex.Message; }
         }
