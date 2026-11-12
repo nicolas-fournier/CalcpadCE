@@ -3407,7 +3407,7 @@ namespace Calcpad.Avalonia
 
             _editor.Document.Replace(start, length, indent + replacement);
             _editor.Focus();
-            _status.Text = "Line forced to text";
+            StatusHold("Line converted to text (one-way) — Ctrl+Z to undo");
             ScheduleRender();
         }
 
@@ -3598,7 +3598,7 @@ namespace Calcpad.Avalonia
                 if (File.Exists(path))
                 {
                     _webView.LoadHtml(File.ReadAllText(path));
-                    _status.Text = $"{label} — press Run (F5) to return to the preview";
+                    _status.Text = $"{label} — press F5 to return to the preview";
                 }
                 else _status.Text = "Help page not found";
             }
@@ -3765,7 +3765,7 @@ namespace Calcpad.Avalonia
 
         // Reflects the form/computed state on the toolbar so the mode is never invisible: on an
         // input-form worksheet the Run button names the action it performs (compute vs edit) and is
-        // tinted, and the "↻ Inputs" button only appears there; otherwise it is a plain "Run (F5)".
+        // tinted, and the "↻ Inputs" button only appears there; otherwise it is "Update preview (F5)".
         private void UpdateRunButton()
         {
             if (_runButton is null) return;
@@ -3788,7 +3788,7 @@ namespace Calcpad.Avalonia
             else
             {
                 _recalcInputsButton.IsVisible = false;
-                _runButton.Content = "Run (F5)";
+                _runButton.Content = "Update preview (F5)";
                 _runButton.ClearValue(Button.BackgroundProperty);
                 ToolTip.SetTip(_runButton, "Update the preview (F5).");
             }

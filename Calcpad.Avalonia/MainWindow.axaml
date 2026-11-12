@@ -84,7 +84,7 @@
         <ToggleButton x:Name="AiToggle" Content="AI" IsChecked="False"
                       IsCheckedChanged="AiToggle_Changed" ToolTip.Tip="Show/hide the AI assistant"/>
         <Border Width="1" Background="#E2E4E8" Margin="2,2"/>
-        <Button x:Name="RunButton" Content="Run (F5)" Click="Run_Click"
+        <Button x:Name="RunButton" Content="Update preview (F5)" Click="Run_Click"
                 ToolTip.Tip="Update the preview (F5). On an input-form worksheet this toggles between editing the boxes and the calculated result."/>
         <Button x:Name="RecalcInputsButton" Content="↻ Inputs" Click="RecalcInputs_Click" IsVisible="False"
                 ToolTip.Tip="Read the #input field values from the preview and recalculate"/>
