@@ -1326,20 +1326,39 @@
                 $(".exp").click(function () {
                     Toggle($(this));
                 });
-
-                $("a").click(function () {
-                    chrome.webview.postMessage('clicked');
-                });
-
-				$("select.insert").change(function () {
-                    chrome.webview.postMessage('clicked');
-                });
-
-				window.addEventListener('click', () => {
-					chrome.webview.postMessage('focused');
-				});
             });
         }
+    </script>
+    <!-- Self-contained DOM context menu (the offscreen browser draws no native one). -->
+    <style>
+    #cpCtx{position:fixed;z-index:2147483647;min-width:168px;background:#fff;border:1px solid #cbd1d9;
+     border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.18);padding:4px;display:none;
+     font:13px 'Segoe UI',Arial,sans-serif;color:#1b2330;-webkit-user-select:none;user-select:none;}
+    #cpCtx>div{padding:6px 12px;border-radius:5px;cursor:default;white-space:nowrap;}
+    #cpCtx>div:hover{background:#eaf2ff;}
+    #cpCtx hr{border:none;border-top:1px solid #eef0f3;margin:4px 2px;}
+    </style>
+    <div id="cpCtx">
+     <div data-a="copy">Copy</div>
+     <div data-a="selall">Select all</div>
+     <hr>
+     <div data-a="print">Print&#8230;</div>
+    </div>
+    <script>
+    (function(){var m=document.getElementById('cpCtx');if(!m)return;
+     addEventListener('contextmenu',function(e){e.preventDefault();
+      var x=Math.min(e.clientX,innerWidth-176),y=Math.min(e.clientY,innerHeight-120);
+      m.style.left=x+'px';m.style.top=y+'px';m.style.display='block';},false);
+     addEventListener('click',function(){m.style.display='none';},false);
+     addEventListener('scroll',function(){m.style.display='none';},true);
+     m.addEventListener('mousedown',function(e){e.preventDefault();});
+     m.addEventListener('click',function(e){var a=e.target&&e.target.getAttribute('data-a');if(!a)return;
+      m.style.display='none';
+      if(a==='copy'){try{document.execCommand('copy');}catch(_){}}
+      else if(a==='selall'){try{var r=document.createRange();r.selectNodeContents(document.body);
+       var s=getSelection();s.removeAllRanges();s.addRange(r);}catch(_){}}
+      else if(a==='print'){try{print();}catch(_){}}});
+    })();
     </script>
 </body>
 </html>

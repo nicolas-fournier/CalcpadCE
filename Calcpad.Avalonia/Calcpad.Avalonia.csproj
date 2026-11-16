@@ -58,6 +58,11 @@
     <Content Include="Assets\help.html">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!-- jQuery used by help.html's expand/collapse toggles; shipped beside it so the
+         relative <script src> resolves when the page is loaded from its file:// origin. -->
+    <Content Include="Assets\jquery-3.6.3.min.js">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <!-- Avalonia app feature/shortcut guide. -->
     <Content Include="Assets\app-help.html">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

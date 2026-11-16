@@ -182,6 +182,7 @@ namespace Calcpad.Avalonia
             InitTableEditor();
             try { _editor.TextArea.LeftMargins.Add(new CalcGutterMargin(ClassifyLineBadge, ToggleLineByOffset)); } catch { }
             BuildEditorContextMenu();
+            ConfigureWebView();
             InitEditorDrop();
             BuildKeypad();
             _keypadHost.IsVisible = _keypadToggle.IsChecked == true; // honour the default-closed toggle (handler is guarded during XAML load)
@@ -992,6 +993,49 @@ namespace Calcpad.Avalonia
                 },
                 global::Avalonia.Interactivity.RoutingStrategies.Tunnel);
         }
+
+        // ---- Preview (WebView) context menu ----
+        // Chromium's offscreen renderer can't draw a native context menu (it pops up
+        // empty), so disable it. The rendered pages carry their own small DOM context
+        // menu instead — see WebContextMenuHtml (injected by BuildPage) and Assets/help.html.
+        private void ConfigureWebView()
+        {
+            try { _webView.DisableBuiltinContextMenus = true; } catch { }
+        }
+
+        // Self-contained DOM context menu injected into every rendered page. Works inside
+        // the offscreen browser (no host bridge, no jQuery): Copy / Select all / Print.
+        internal const string WebContextMenuHtml = @"
+<style>
+#cpCtx{position:fixed;z-index:2147483647;min-width:168px;background:#fff;border:1px solid #cbd1d9;
+ border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.18);padding:4px;display:none;
+ font:13px 'Segoe UI',Arial,sans-serif;color:#1b2330;-webkit-user-select:none;user-select:none;}
+#cpCtx>div{padding:6px 12px;border-radius:5px;cursor:default;white-space:nowrap;}
+#cpCtx>div:hover{background:#eaf2ff;}
+#cpCtx hr{border:none;border-top:1px solid #eef0f3;margin:4px 2px;}
+</style>
+<div id=""cpCtx"">
+ <div data-a=""copy"">Copy</div>
+ <div data-a=""selall"">Select all</div>
+ <hr>
+ <div data-a=""print"">Print&#8230;</div>
+</div>
+<script>
+(function(){var m=document.getElementById('cpCtx');if(!m)return;
+ addEventListener('contextmenu',function(e){e.preventDefault();
+  var x=Math.min(e.clientX,innerWidth-176),y=Math.min(e.clientY,innerHeight-120);
+  m.style.left=x+'px';m.style.top=y+'px';m.style.display='block';},false);
+ addEventListener('click',function(){m.style.display='none';},false);
+ addEventListener('scroll',function(){m.style.display='none';},true);
+ m.addEventListener('mousedown',function(e){e.preventDefault();});
+ m.addEventListener('click',function(e){var a=e.target&&e.target.getAttribute('data-a');if(!a)return;
+  m.style.display='none';
+  if(a==='copy'){try{document.execCommand('copy');}catch(_){}}
+  else if(a==='selall'){try{var r=document.createRange();r.selectNodeContents(document.body);
+   var s=getSelection();s.removeAllRanges();s.addRange(r);}catch(_){}}
+  else if(a==='print'){try{print();}catch(_){}}});
+})();
+</script>";
 
         // ---- "Switch result to unit" submenu (compatible units + live search) ----
 
@@ -3597,7 +3641,10 @@ namespace Calcpad.Avalonia
                 var path = Path.Combine(AppContext.BaseDirectory, "Assets", file);
                 if (File.Exists(path))
                 {
-                    _webView.LoadHtml(File.ReadAllText(path));
+                    // LoadUrl (not LoadHtml) so the page keeps a file:// origin and its
+                    // relative resources — e.g. help.html's jquery-3.6.3.min.js — resolve.
+                    _webView.LoadUrl(new Uri(path).AbsoluteUri);
+                    _webView.Opacity = 1;
                     _status.Text = $"{label} — press F5 to return to the preview";
                 }
                 else _status.Text = "Help page not found";
@@ -4051,6 +4098,7 @@ namespace Calcpad.Avalonia
             var page = new StringBuilder(template.Length + bodyHtml.Length + 32);
             page.Append(template);
             page.Append(bodyHtml);
+            page.Append(WebContextMenuHtml);
             page.Append(" </body></html>");
             return page.ToString();
         }
